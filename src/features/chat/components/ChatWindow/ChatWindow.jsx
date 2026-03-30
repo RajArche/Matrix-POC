@@ -12,6 +12,7 @@ const { Text } = Typography;
 export const ChatWindow = ({ sendMessage, getRoomMembers, inviteUser, leaveRoom, uploadFile, joinRoom, forwardMessage }) => {
   const dispatch = useDispatch();
   const [text, setText] = useState("");
+  const lastSendAtRef = useRef(0);
   const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
   const [isMemberListOpen, setIsMemberListOpen] = useState(false);
   const fileInputRef = useRef(null);
@@ -106,6 +107,10 @@ export const ChatWindow = ({ sendMessage, getRoomMembers, inviteUser, leaveRoom,
 
   // 4. The Send Flow Trigger
   const handleSend = () => {
+    const now = Date.now();
+    // Prevent accidental double-sends (Enter + click) within a short window.
+    if (now - lastSendAtRef.current < 500) return;
+    lastSendAtRef.current = now;
     if (!encryptionEnabled) return;
     if (text.trim() && activeRoomId) {
       sendMessage(activeRoomId, text); // Fires postMessage to the Worker!

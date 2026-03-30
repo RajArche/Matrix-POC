@@ -11,9 +11,48 @@ let myUserId = null;
 // Map: roomId -> targetUserId (the other participant)
 const pendingDirectEncryption = new Map();
 
+// Deduplication map: eventId -> "undecryptable" | "decrypted"
+// Purpose:
+//   1. Prevent the same eventId from being emitted twice as the same type.
+//   2. Allow an "undecryptable" placeholder to be upgraded to a "decrypted" message
+//      when Event.decrypted fires later.
+const emittedEvents = new Map();
+
+/**
+ * Decides whether a NEW_MESSAGE should be emitted for a given eventId.
+ * - undecryptable=true : emit placeholder only if we haven't already emitted a real message for it.
+ * - undecryptable=false: emit real message; always allowed (upgrades placeholders).
+ * Returns true when the caller SHOULD emit, and records the decision.
+ */
+const shouldEmitNewMessage = (eventId, { undecryptable = false } = {}) => {
+  if (!eventId) return false;
+  const prev = emittedEvents.get(eventId);
+
+  if (undecryptable) {
+    // Already emitted a real (decrypted) version — don't downgrade to placeholder.
+    if (prev === "decrypted") return false;
+    // Already emitted a placeholder — don't duplicate.
+    if (prev === "undecryptable") return false;
+    emittedEvents.set(eventId, "undecryptable");
+    return true;
+  } else {
+    // Real message: always emit (upgrades placeholder or first emit).
+    emittedEvents.set(eventId, "decrypted");
+    return true;
+  }
+};
+
 const isUndecryptablePlaceholder = (content = {}) => {
   const body = content?.body || "";
-  return typeof body === "string" && body.includes("Unable to decrypt");
+  if (typeof body !== "string") return false;
+  // Covers various SDK fallback strings and key-backup failures.
+  return (
+    body.includes("Unable to decrypt") ||
+    body.includes("DecryptionError") ||
+    body.includes("key backup") ||
+    body.includes("key backup is not working") ||
+    body.includes("not working")
+  );
 };
 
 const tryEnableKeyBackupRecovery = async () => {
@@ -121,15 +160,52 @@ const enableRoomEncryptionIfNeeded = async (roomId) => {
   if (joinedMembers.length !== 2) return;
   if (!joinedMembers.some((m) => m.userId === myUserId)) return;
 
+  // ROOT-CAUSE FIX for M_FORBIDDEN: only the room admin (power level >= 100) should
+  // attempt to send state events. When user B (power level 0) syncs, their client
+  // would also call this function and get M_FORBIDDEN from the server.
+  try {
+    const powerLevels = room.currentState?.getStateEvents("m.room.power_levels", "");
+    const pl = Array.isArray(powerLevels) ? powerLevels[0] : powerLevels;
+    const myPower = pl?.getContent()?.users?.[myUserId] ?? pl?.getContent()?.users_default ?? 0;
+    const requiredForState = pl?.getContent()?.state_default ?? 50;
+    if (myPower < requiredForState) {
+      // This user doesn't have permission to set state events. Skip silently.
+      return;
+    }
+  } catch {
+    // If power level check fails, skip to avoid M_FORBIDDEN noise.
+    return;
+  }
+
   // Attempt to enable key backup before enabling encryption.
   await tryEnableKeyBackupRecovery();
 
-  await matrixClient.sendStateEvent(
-    roomId,
-    "m.room.encryption",
-    { algorithm: "m.megolm.v1.aes-sha2" },
-    ""
-  );
+  try {
+    await matrixClient.sendStateEvent(
+      roomId,
+      "m.room.encryption",
+      { algorithm: "m.megolm.v1.aes-sha2" },
+      ""
+    );
+  } catch (err) {
+    if (err?.errcode === "M_FORBIDDEN") {
+      console.warn("[E2EE] Not enough power to enable encryption in", roomId, "— skipping.");
+      return;
+    }
+    throw err;
+  }
+
+  // After enabling encryption, eagerly download device keys for all room members.
+  // This ensures the first message can be encrypted for everyone without a
+  // race-condition where keys haven't been fetched yet.
+  try {
+    const memberIds = room.getJoinedMembers().map((m) => m.userId);
+    if (memberIds.length > 0) {
+      await matrixClient.downloadKeys(memberIds);
+    }
+  } catch (e) {
+    console.warn("[E2EE] downloadKeys after encryption bootstrap failed:", e?.message);
+  }
 
   postVisibleRooms();
 };
@@ -193,8 +269,36 @@ self.onmessage = async (event) => {
           storePrefix: `healthcare_crypto_${payload.userId}_${payload.deviceId || "auto"}_`,
           storageBackend: "opfs",
         });
-        console.log(matrixClient, "matrixClient");
-        console.log(matrixClient.getVisibleRooms(), "matrixClient.getVisibleRooms()");
+
+        // CRITICAL FIX: By default Rust crypto only shares Megolm session keys with
+        // *verified* (cross-signed) devices. In a local / dev environment no devices
+        // have completed cross-signing, so recipient devices never receive the session
+        // key and every message shows "[Unable to decrypt yet]".
+        // Setting blacklistUnverifiedDevices = false lets session keys be sent to ALL
+        // joined devices regardless of their verification status.
+        // NOTE: For production healthcare use, layer device-verification UX on top of
+        //       this and re-enable the blacklist once users have verified their devices.
+        try {
+          const cryptoApi = matrixClient.getCrypto?.();
+          if (cryptoApi) {
+            // Rust crypto API (matrix-js-sdk v33+)
+            if (typeof cryptoApi.setGlobalBlacklistUnverifiedDevices === "function") {
+              cryptoApi.setGlobalBlacklistUnverifiedDevices(false);
+            }
+            // Newer isolation-mode API (v35+) – "AllDevicesIsolated" is the restrictive default;
+            // passing nothing / "none" removes the restriction.
+            if (typeof cryptoApi.setDeviceIsolationMode === "function") {
+              cryptoApi.setDeviceIsolationMode({ kind: "none" });
+            }
+          }
+          // Legacy wrapper method (still works in v37 as a convenience shim)
+          if (typeof matrixClient.setGlobalBlacklistUnverifiedDevices === "function") {
+            matrixClient.setGlobalBlacklistUnverifiedDevices(false);
+          }
+        } catch (e) {
+          console.warn("[E2EE] Could not set device blacklist policy:", e?.message);
+        }
+
         // 4. START SYNCING:
         await matrixClient.startClient({ initialSyncLimit: 20 });
         await tryEnableKeyBackupRecovery();
@@ -206,18 +310,98 @@ self.onmessage = async (event) => {
         // For encrypted rooms, messages arrive as m.room.encrypted first.
         // This handles UNENCRYPTED rooms and messages that decrypt instantly.
         matrixClient.on("Room.timeline", (matrixEvent, room) => {
+          const msgType = matrixEvent.getType();
+
+          // ROOT-CAUSE FIX for "UI empty but unread count increments":
+          // When isDecryptionFailure() is true the event type is still m.room.encrypted but
+          // it has already been marked as a failure. The old early-return prevented ANY
+          // placeholder from being emitted, so messagesByRoom was never populated.
+          // Fix: treat decryption failure the same as an undecryptable encrypted event
+          // — emit a safe placeholder AND request missing keys.
           if (matrixEvent?.isDecryptionFailure?.()) {
             void tryRequestMissingRoomKey(matrixEvent);
+            const eventId = matrixEvent.getId?.();
+            if (!eventId) return;
+            if (!shouldEmitNewMessage(eventId, { undecryptable: true })) return;
+            self.postMessage({
+              type: "NEW_MESSAGE",
+              payload: {
+                roomId: room.roomId,
+                eventId,
+                sender: matrixEvent.getSender?.() ?? null,
+                body: "[Unable to decrypt yet]",
+                msgtype: "m.text",
+                url: null, format: null, formattedBody: null, info: null, forwardedFrom: null,
+                timestamp: matrixEvent.getTs?.() ?? Date.now(),
+                undecryptable: true,
+              },
+            });
             return;
           }
 
-          const msgType = matrixEvent.getType();
+          // E2EE fallback: for encrypted timeline events where we don't have decrypted
+          // content (e.g. m.room.encrypted and Event.decrypted never fires),
+          // emit a safe placeholder so the UI is never empty.
+          if (msgType === "m.room.encrypted") {
+            const eventId = matrixEvent.getId?.();
+            if (!eventId) return;
+            if (!shouldEmitNewMessage(eventId, { undecryptable: true })) return;
+            self.postMessage({
+              type: "NEW_MESSAGE",
+              payload: {
+                roomId: room.roomId,
+                eventId,
+                sender: matrixEvent.getSender?.() ?? null,
+                body: "[Unable to decrypt yet]",
+                msgtype: "m.text",
+                url: null,
+                format: null,
+                formattedBody: null,
+                info: null,
+                forwardedFrom: null,
+                timestamp: matrixEvent.getTs?.() ?? Date.now(),
+                undecryptable: true,
+              },
+            });
+            return;
+          }
+
           // If already decrypted to m.room.message, forward it immediately
           if (msgType === "m.room.message" && !matrixEvent.isRedacted()) {
             const content = matrixEvent.getContent();
-            if (isUndecryptablePlaceholder(content)) {
+            const body = content?.body;
+            const roomIsEncrypted = typeof room.hasEncryptionStateEvent === "function"
+              ? room.hasEncryptionStateEvent()
+              : roomHasEncryption(room);
+
+            // Detect undecryptable content beyond just a string match.
+            // Some SDK fallback paths may not include the exact "Unable to decrypt" text.
+            const likelyUndecryptable =
+              isUndecryptablePlaceholder(content) ||
+              (roomIsEncrypted && (!body || typeof body !== "string" || body.trim() === ""));
+
+            if (likelyUndecryptable) {
               // Avoid rendering Matrix fallback decrypt-error text as a normal chat message.
               void tryRequestMissingRoomKey(matrixEvent);
+              const eventId = matrixEvent.getId();
+              if (!shouldEmitNewMessage(eventId, { undecryptable: true })) return;
+              self.postMessage({
+                type: "NEW_MESSAGE",
+                payload: {
+                  roomId: room.roomId,
+                  eventId,
+                  sender: matrixEvent.getSender?.() ?? null,
+                  body: "[Unable to decrypt yet]",
+                  msgtype: "m.text",
+                  url: null,
+                  format: null,
+                  formattedBody: null,
+                  info: null,
+                  forwardedFrom: null,
+                  timestamp: matrixEvent.getTs?.() ?? Date.now(),
+                  undecryptable: true,
+                },
+              });
               return;
             }
             self.postMessage({
@@ -248,11 +432,14 @@ self.onmessage = async (event) => {
             if (isUndecryptablePlaceholder(content)) {
               return;
             }
+            const eventId = matrixEvent.getId();
+            // shouldEmitNewMessage without undecryptable flag = real message; upgrades placeholder.
+            if (!shouldEmitNewMessage(eventId)) return;
             self.postMessage({
               type: "NEW_MESSAGE",
               payload: {
                 roomId: matrixEvent.getRoomId(),
-                eventId: matrixEvent.getId(),
+                eventId,
                 sender: matrixEvent.getSender(),
                 body: content.body,
                 msgtype: content.msgtype || "m.text",
@@ -305,7 +492,29 @@ self.onmessage = async (event) => {
 
     case "SEND_MESSAGE":
       if (matrixClient) {
-        await matrixClient.sendTextMessage(payload.roomId, payload.text);
+        try {
+          const room = matrixClient.getRoom(payload.roomId);
+          if (room && roomHasEncryption(room)) {
+            // prepareToEncrypt: downloads device keys for all room members and
+            // pre-creates the Megolm session so the session key IS shared with
+            // every device before the message is actually sent.
+            // Without this there is a race where the message is encrypted before
+            // the recipient's device keys have been fetched → recipient can't decrypt.
+            const cryptoApi = matrixClient.getCrypto?.();
+            if (cryptoApi?.prepareToEncrypt) {
+              await cryptoApi.prepareToEncrypt(room);
+            } else {
+              // Fallback: manually download keys for joined members
+              const memberIds = room.getJoinedMembers().map((m) => m.userId);
+              if (memberIds.length > 0) {
+                await matrixClient.downloadKeys(memberIds).catch(() => {});
+              }
+            }
+          }
+          await matrixClient.sendTextMessage(payload.roomId, payload.text);
+        } catch (e) {
+          self.postMessage({ type: "ERROR", payload: e?.message || String(e) });
+        }
       }
       break;
 
@@ -518,14 +727,22 @@ self.onmessage = async (event) => {
     case "UPLOAD_FILE":
       if (matrixClient) {
         try {
-          // 1. Upload the raw content to the Matrix Media Repo
+          // 1. Ensure device keys are ready for encrypted rooms before upload
+          const uploadRoom = matrixClient.getRoom(payload.roomId);
+          if (uploadRoom && roomHasEncryption(uploadRoom)) {
+            const cryptoApi = matrixClient.getCrypto?.();
+            if (cryptoApi?.prepareToEncrypt) {
+              await cryptoApi.prepareToEncrypt(uploadRoom);
+            }
+          }
+
+          // 2. Upload the raw content to the Matrix Media Repo
           const { content_uri } = await matrixClient.uploadContent(payload.file, {
             name: payload.name,
             type: payload.type
           });
 
-          // 2. Wrap it in a proper Matrix message event
-          // For E2EE rooms, sendTextMessage/sendMessage handles encryption transparently
+          // 3. Wrap it in a proper Matrix message event
           const content = {
             body: payload.name,
             msgtype: payload.type.startsWith('image/') ? "m.image" : "m.file",
@@ -537,9 +754,7 @@ self.onmessage = async (event) => {
           };
 
           await matrixClient.sendMessage(payload.roomId, content);
-          console.log("📎 File successfully uploaded and encrypted:", payload.name);
         } catch(e) {
-          console.error("❌ File Upload Error:", e);
           self.postMessage({ type: "ERROR", payload: "File upload failed: " + e.message });
         }
       }
