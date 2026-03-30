@@ -1,0 +1,20 @@
+@import './variables';
+
+body, html, #root {
+  margin: 0;
+  padding: 0;
+  height: 100vh;
+  width: 100vw;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background-color: $bg-light;
+  overflow: hidden;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+// Global overrides for Ant Design
+.ant-menu-dark {
+    background-color: $primary-green !important;
+}

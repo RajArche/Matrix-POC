@@ -1,0 +1,76 @@
+@import '../../../../shared/styles/variables';
+
+.layoutContainer {
+  display: flex;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+  background-color: $bg-white;
+}
+
+.sidebar {
+  width: 250px;
+  background-color: $bg-white; /* Changed to white to match reference */
+  border-right: 1px solid $border-color;
+  flex-shrink: 0;
+}
+
+.mainContent {
+  flex-grow: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.topHeader {
+  height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+  border-bottom: 1px solid $border-color;
+  background-color: $bg-white;
+  flex-shrink: 0;
+}
+
+.searchContainer {
+  flex: 1;
+}
+
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+
+.languageSelect {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: $primary-green;
+  font-weight: 500;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.chatArea {
+  display: flex;
+  flex-grow: 1;
+  overflow: hidden;
+}
+
+.conversationList {
+  width: 350px;
+  background-color: $bg-white;
+  border-right: 1px solid $border-color;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.chatWindow {
+  flex-grow: 1;
+  background-color: $bg-white;
+  display: flex;
+  flex-direction: column;
+}
