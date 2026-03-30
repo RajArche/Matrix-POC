@@ -1,0 +1,720 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ChatPOC — Codebase Architecture</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: #0f1117;
+    color: #e2e8f0;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    overflow: hidden;
+    height: 100vh;
+  }
+
+  #toolbar {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    height: 48px;
+    background: #161b27;
+    border-bottom: 1px solid #2d3748;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 0 20px;
+    z-index: 100;
+  }
+
+  #toolbar h1 {
+    font-size: 14px;
+    font-weight: 600;
+    color: #a78bfa;
+    letter-spacing: 0.02em;
+  }
+
+  .tb-sep { width: 1px; height: 24px; background: #2d3748; }
+
+  .tb-btn {
+    background: #1e2535;
+    border: 1px solid #2d3748;
+    color: #94a3b8;
+    font-size: 12px;
+    padding: 4px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all .15s;
+  }
+  .tb-btn:hover { background: #283047; color: #e2e8f0; border-color: #4a5568; }
+
+  .legend {
+    display: flex;
+    gap: 14px;
+    margin-left: auto;
+    align-items: center;
+    font-size: 11px;
+  }
+  .legend-item { display: flex; align-items: center; gap: 5px; color: #94a3b8; }
+  .legend-dot { width: 10px; height: 10px; border-radius: 2px; }
+
+  #canvas-wrap {
+    position: fixed;
+    top: 48px; left: 0; right: 0; bottom: 0;
+    overflow: hidden;
+    cursor: grab;
+  }
+  #canvas-wrap.panning { cursor: grabbing; }
+
+  #svg-root {
+    width: 3200px;
+    height: 2400px;
+    transform-origin: 0 0;
+    user-select: none;
+  }
+
+  /* ── tooltip ── */
+  #tooltip {
+    position: fixed;
+    background: #1e2535;
+    border: 1px solid #4a5568;
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 12px;
+    line-height: 1.6;
+    max-width: 300px;
+    pointer-events: none;
+    display: none;
+    z-index: 200;
+    box-shadow: 0 4px 20px rgba(0,0,0,.5);
+  }
+  #tooltip strong { color: #a78bfa; display: block; margin-bottom: 4px; font-size: 13px; }
+  #tooltip .path { color: #64748b; font-family: monospace; font-size: 10px; margin-top: 4px; }
+
+  /* ── node styles ── */
+  .node-group { cursor: pointer; }
+
+  .node-rect {
+    rx: 10px;
+    filter: drop-shadow(0 4px 12px rgba(0,0,0,.4));
+    transition: filter .2s;
+  }
+  .node-group:hover .node-rect {
+    filter: drop-shadow(0 6px 20px rgba(167,139,250,.3));
+  }
+
+  .node-title {
+    font-size: 13px;
+    font-weight: 700;
+    fill: #f1f5f9;
+    dominant-baseline: middle;
+  }
+  .node-subtitle {
+    font-size: 10px;
+    fill: #94a3b8;
+    dominant-baseline: middle;
+  }
+  .node-badge {
+    font-size: 9px;
+    fill: #cbd5e1;
+    dominant-baseline: middle;
+    font-family: monospace;
+  }
+
+  .layer-label {
+    font-size: 11px;
+    font-weight: 700;
+    fill: #475569;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    dominant-baseline: middle;
+  }
+
+  .edge {
+    fill: none;
+    stroke-width: 1.5;
+    opacity: .55;
+  }
+  .edge-label {
+    font-size: 9px;
+    fill: #64748b;
+    dominant-baseline: middle;
+  }
+
+  /* section backgrounds */
+  .section-bg {
+    fill: none;
+    stroke-width: 1;
+    stroke-dasharray: 6 4;
+    rx: 16px;
+    opacity: .35;
+  }
+
+  .arrow-marker { overflow: visible; }
+</style>
+</head>
+<body>
+
+<div id="toolbar">
+  <h1>ChatPOC — Architecture Diagram</h1>
+  <div class="tb-sep"></div>
+  <button class="tb-btn" onclick="zoom(1.15)">＋ Zoom In</button>
+  <button class="tb-btn" onclick="zoom(0.87)">－ Zoom Out</button>
+  <button class="tb-btn" onclick="resetView()">⊙ Reset</button>
+  <div class="legend">
+    <div class="legend-item"><div class="legend-dot" style="background:#6d28d9"></div> Entry / Shell</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#0e7490"></div> Redux State</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#065f46"></div> Components</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#7c2d12"></div> Workers</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#374151"></div> External</div>
+  </div>
+</div>
+
+<div id="canvas-wrap">
+  <svg id="svg-root" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="arrow-purple" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto" class="arrow-marker">
+        <path d="M0,0 L0,6 L8,3 z" fill="#7c3aed" opacity=".7"/>
+      </marker>
+      <marker id="arrow-cyan" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+        <path d="M0,0 L0,6 L8,3 z" fill="#06b6d4" opacity=".7"/>
+      </marker>
+      <marker id="arrow-green" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+        <path d="M0,0 L0,6 L8,3 z" fill="#10b981" opacity=".7"/>
+      </marker>
+      <marker id="arrow-orange" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+        <path d="M0,0 L0,6 L8,3 z" fill="#f97316" opacity=".7"/>
+      </marker>
+      <marker id="arrow-gray" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+        <path d="M0,0 L0,6 L8,3 z" fill="#6b7280" opacity=".7"/>
+      </marker>
+      <marker id="arrow-red" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+        <path d="M0,0 L0,6 L8,3 z" fill="#ef4444" opacity=".7"/>
+      </marker>
+    </defs>
+
+    <!-- ═══════════════════════════════════════════════════════
+         LAYER 0  —  BUILD / CONFIG
+    ═══════════════════════════════════════════════════════ -->
+    <text x="60" y="70" class="layer-label">⚙ Build &amp; Config</text>
+    <rect x="50" y="90" width="740" height="110" class="section-bg" stroke="#6d28d9"/>
+
+    <!-- index.html -->
+    <g class="node-group" data-id="index-html">
+      <rect x="70" y="108" width="140" height="72" class="node-rect" fill="#1a1040" stroke="#5b21b6" stroke-width="1.5"/>
+      <text x="140" y="136" class="node-title" text-anchor="middle">index.html</text>
+      <text x="140" y="153" class="node-subtitle" text-anchor="middle">Vite entry point</text>
+      <text x="140" y="168" class="node-badge" text-anchor="middle">root HTML shell</text>
+    </g>
+
+    <!-- vite.config.js -->
+    <g class="node-group" data-id="vite-config">
+      <rect x="250" y="108" width="160" height="72" class="node-rect" fill="#1a1040" stroke="#7c3aed" stroke-width="1.5"/>
+      <text x="330" y="132" class="node-title" text-anchor="middle">vite.config.js</text>
+      <text x="330" y="149" class="node-subtitle" text-anchor="middle">Vite + React plugin</text>
+      <text x="330" y="165" class="node-badge" text-anchor="middle">COOP/COEP headers</text>
+    </g>
+
+    <!-- eslint.config.js -->
+    <g class="node-group" data-id="eslint-config">
+      <rect x="450" y="108" width="150" height="72" class="node-rect" fill="#1a1040" stroke="#5b21b6" stroke-width="1.5"/>
+      <text x="525" y="136" class="node-title" text-anchor="middle">eslint.config.js</text>
+      <text x="525" y="153" class="node-subtitle" text-anchor="middle">Flat ESLint config</text>
+      <text x="525" y="168" class="node-badge" text-anchor="middle">linting rules</text>
+    </g>
+
+    <!-- package.json -->
+    <g class="node-group" data-id="pkg-json">
+      <rect x="640" y="108" width="140" height="72" class="node-rect" fill="#1a1040" stroke="#7c3aed" stroke-width="1.5"/>
+      <text x="710" y="136" class="node-title" text-anchor="middle">package.json</text>
+      <text x="710" y="153" class="node-subtitle" text-anchor="middle">matrix-poc</text>
+      <text x="710" y="168" class="node-badge" text-anchor="middle">deps + scripts</text>
+    </g>
+
+    <!-- ═══════════════════════════════════════════════════════
+         LAYER 1  —  ENTRY / SHELL
+    ═══════════════════════════════════════════════════════ -->
+    <text x="60" y="245" class="layer-label">▶ Entry &amp; Shell</text>
+    <rect x="50" y="262" width="420" height="110" class="section-bg" stroke="#6d28d9"/>
+
+    <!-- main.jsx -->
+    <g class="node-group" data-id="main-jsx">
+      <rect x="70" y="278" width="160" height="78" class="node-rect" fill="#1e1045" stroke="#7c3aed" stroke-width="2"/>
+      <text x="150" y="302" class="node-title" text-anchor="middle">main.jsx</text>
+      <text x="150" y="319" class="node-subtitle" text-anchor="middle">React root</text>
+      <text x="150" y="335" class="node-badge" text-anchor="middle">Redux &lt;Provider&gt;</text>
+    </g>
+
+    <!-- App.jsx -->
+    <g class="node-group" data-id="app-jsx">
+      <rect x="270" y="278" width="160" height="78" class="node-rect" fill="#1e1045" stroke="#7c3aed" stroke-width="2"/>
+      <text x="350" y="302" class="node-title" text-anchor="middle">App.jsx</text>
+      <text x="350" y="319" class="node-subtitle" text-anchor="middle">Root component</text>
+      <text x="350" y="335" class="node-badge" text-anchor="middle">renders ChatLayout</text>
+    </g>
+
+    <!-- ═══════════════════════════════════════════════════════
+         LAYER 2  —  REDUX STATE
+    ═══════════════════════════════════════════════════════ -->
+    <text x="540" y="245" class="layer-label">⬡ State Management</text>
+    <rect x="530" y="262" width="520" height="110" class="section-bg" stroke="#0e7490"/>
+
+    <!-- store.js -->
+    <g class="node-group" data-id="store">
+      <rect x="550" y="278" width="160" height="78" class="node-rect" fill="#083344" stroke="#0891b2" stroke-width="2"/>
+      <text x="630" y="302" class="node-title" text-anchor="middle">store.js</text>
+      <text x="630" y="319" class="node-subtitle" text-anchor="middle">Redux Store</text>
+      <text x="630" y="335" class="node-badge" text-anchor="middle">app/store.js</text>
+    </g>
+
+    <!-- chatSlice.js -->
+    <g class="node-group" data-id="chat-slice">
+      <rect x="760" y="278" width="260" height="78" class="node-rect" fill="#083344" stroke="#06b6d4" stroke-width="2"/>
+      <text x="890" y="297" class="node-title" text-anchor="middle">chatSlice.js</text>
+      <text x="890" y="313" class="node-subtitle" text-anchor="middle">Redux Slice — chat domain</text>
+      <text x="890" y="330" class="node-badge" text-anchor="middle">rooms · messages · members · search · user</text>
+    </g>
+
+    <!-- ═══════════════════════════════════════════════════════
+         LAYER 3  —  COMPONENTS
+    ═══════════════════════════════════════════════════════ -->
+    <text x="60" y="430" class="layer-label">⬛ UI Components — features/chat/components/</text>
+    <rect x="50" y="448" width="1260" height="200" class="section-bg" stroke="#065f46"/>
+
+    <!-- ChatLayout -->
+    <g class="node-group" data-id="chat-layout">
+      <rect x="70" y="468" width="200" height="158" class="node-rect" fill="#052e16" stroke="#059669" stroke-width="2.5"/>
+      <text x="170" y="492" class="node-title" text-anchor="middle">ChatLayout</text>
+      <text x="170" y="509" class="node-subtitle" text-anchor="middle">Root layout shell</text>
+      <text x="170" y="526" class="node-badge" text-anchor="middle">ChatLayout.jsx</text>
+      <line x1="80" y1="538" x2="260" y2="538" stroke="#1a3a2a" stroke-width="1"/>
+      <text x="170" y="551" class="node-badge" text-anchor="middle">Ant Design Layout</text>
+      <text x="170" y="565" class="node-badge" text-anchor="middle">useMatrixInit hook</text>
+      <text x="170" y="579" class="node-badge" text-anchor="middle">hard-coded Matrix creds ⚠</text>
+      <text x="170" y="596" class="node-badge" text-anchor="middle">.module.scss</text>
+    </g>
+
+    <!-- ConversationList -->
+    <g class="node-group" data-id="conv-list">
+      <rect x="300" y="468" width="180" height="88" class="node-rect" fill="#052e16" stroke="#10b981" stroke-width="1.5"/>
+      <text x="390" y="492" class="node-title" text-anchor="middle">ConversationList</text>
+      <text x="390" y="508" class="node-subtitle" text-anchor="middle">Room / DM list</text>
+      <text x="390" y="524" class="node-badge" text-anchor="middle">ConversationList.jsx</text>
+      <text x="390" y="539" class="node-badge" text-anchor="middle">reads Redux rooms</text>
+    </g>
+
+    <!-- ChatWindow -->
+    <g class="node-group" data-id="chat-window">
+      <rect x="510" y="468" width="180" height="88" class="node-rect" fill="#052e16" stroke="#10b981" stroke-width="1.5"/>
+      <text x="600" y="492" class="node-title" text-anchor="middle">ChatWindow</text>
+      <text x="600" y="508" class="node-subtitle" text-anchor="middle">Message thread</text>
+      <text x="600" y="524" class="node-badge" text-anchor="middle">ChatWindow.jsx</text>
+      <text x="600" y="539" class="node-badge" text-anchor="middle">reads Redux messages</text>
+    </g>
+
+    <!-- SidebarMenu -->
+    <g class="node-group" data-id="sidebar-menu">
+      <rect x="720" y="468" width="180" height="88" class="node-rect" fill="#052e16" stroke="#10b981" stroke-width="1.5"/>
+      <text x="810" y="492" class="node-title" text-anchor="middle">SidebarMenu</text>
+      <text x="810" y="508" class="node-subtitle" text-anchor="middle">Navigation sidebar</text>
+      <text x="810" y="524" class="node-badge" text-anchor="middle">SidebarMenu.jsx</text>
+      <text x="810" y="539" class="node-badge" text-anchor="middle">Ant Design icons</text>
+    </g>
+
+    <!-- Modals group -->
+    <g class="node-group" data-id="create-group">
+      <rect x="930" y="468" width="170" height="78" class="node-rect" fill="#052e16" stroke="#34d399" stroke-width="1.5"/>
+      <text x="1015" y="492" class="node-title" text-anchor="middle">CreateGroupModal</text>
+      <text x="1015" y="508" class="node-subtitle" text-anchor="middle">Create group room</text>
+      <text x="1015" y="524" class="node-badge" text-anchor="middle">CreateGroupModal.jsx</text>
+    </g>
+
+    <g class="node-group" data-id="invite-modal">
+      <rect x="930" y="558" width="170" height="78" class="node-rect" fill="#052e16" stroke="#34d399" stroke-width="1.5"/>
+      <text x="1015" y="582" class="node-title" text-anchor="middle">InviteMemberModal</text>
+      <text x="1015" y="598" class="node-subtitle" text-anchor="middle">Invite to room</text>
+      <text x="1015" y="614" class="node-badge" text-anchor="middle">InviteMemberModal.jsx</text>
+    </g>
+
+    <g class="node-group" data-id="member-drawer">
+      <rect x="1120" y="468" width="170" height="78" class="node-rect" fill="#052e16" stroke="#34d399" stroke-width="1.5"/>
+      <text x="1205" y="492" class="node-title" text-anchor="middle">MemberListDrawer</text>
+      <text x="1205" y="508" class="node-subtitle" text-anchor="middle">Room members</text>
+      <text x="1205" y="524" class="node-badge" text-anchor="middle">MemberListDrawer.jsx</text>
+    </g>
+
+    <!-- ═══════════════════════════════════════════════════════
+         LAYER 4  —  HOOKS
+    ═══════════════════════════════════════════════════════ -->
+    <text x="60" y="700" class="layer-label">⚡ Hooks — features/chat/hooks/</text>
+    <rect x="50" y="716" width="400" height="100" class="section-bg" stroke="#d97706"/>
+
+    <g class="node-group" data-id="use-matrix-init">
+      <rect x="70" y="730" width="360" height="82" class="node-rect" fill="#2d1b00" stroke="#f59e0b" stroke-width="2.5"/>
+      <text x="250" y="752" class="node-title" text-anchor="middle">useMatrixInit</text>
+      <text x="250" y="769" class="node-subtitle" text-anchor="middle">Main orchestration hook</text>
+      <text x="250" y="784" class="node-badge" text-anchor="middle">spawns matrixWorker + sqliteWorkerRouter · dispatches to Redux</text>
+      <text x="250" y="799" class="node-badge" text-anchor="middle">hooks/useMatrixInit.js</text>
+    </g>
+
+    <!-- ═══════════════════════════════════════════════════════
+         LAYER 5  —  WORKERS
+    ═══════════════════════════════════════════════════════ -->
+    <text x="530" y="700" class="layer-label">⚙ Web Workers — features/chat/workers/</text>
+    <rect x="520" y="716" width="820" height="310" class="section-bg" stroke="#b45309"/>
+
+    <!-- matrixWorker -->
+    <g class="node-group" data-id="matrix-worker">
+      <rect x="540" y="730" width="240" height="128" class="node-rect" fill="#3b1a00" stroke="#ea580c" stroke-width="2"/>
+      <text x="660" y="754" class="node-title" text-anchor="middle">matrixWorker.js</text>
+      <text x="660" y="771" class="node-subtitle" text-anchor="middle">Matrix client (off-thread)</text>
+      <line x1="550" y1="782" x2="770" y2="782" stroke="#4a2a10" stroke-width="1"/>
+      <text x="660" y="795" class="node-badge" text-anchor="middle">matrix-js-sdk</text>
+      <text x="660" y="810" class="node-badge" text-anchor="middle">@matrix-org/matrix-sdk-crypto-wasm</text>
+      <text x="660" y="825" class="node-badge" text-anchor="middle">E2EE · rooms · timeline events</text>
+      <text x="660" y="840" class="node-badge" text-anchor="middle">→ postMessage NEW_MESSAGE, ROOMS</text>
+    </g>
+
+    <!-- sqliteWorkerRouter -->
+    <g class="node-group" data-id="sqlite-router">
+      <rect x="810" y="730" width="240" height="128" class="node-rect" fill="#3b1a00" stroke="#f97316" stroke-width="2"/>
+      <text x="930" y="754" class="node-title" text-anchor="middle">sqliteWorkerRouter.js</text>
+      <text x="930" y="771" class="node-subtitle" text-anchor="middle">SQLite message router</text>
+      <line x1="820" y1="782" x2="1040" y2="782" stroke="#4a2a10" stroke-width="1"/>
+      <text x="930" y="795" class="node-badge" text-anchor="middle">@sqlite.org/sqlite-wasm</text>
+      <text x="930" y="810" class="node-badge" text-anchor="middle">OPFS persistent store</text>
+      <text x="930" y="825" class="node-badge" text-anchor="middle">delegates to sqliteWorker.js</text>
+      <text x="930" y="840" class="node-badge" text-anchor="middle">→ offline history on load</text>
+    </g>
+
+    <!-- Helper modules -->
+    <g class="node-group" data-id="crypto-js">
+      <rect x="540" y="880" width="140" height="62" class="node-rect" fill="#2a1400" stroke="#c2410c" stroke-width="1.5"/>
+      <text x="610" y="902" class="node-title" text-anchor="middle">crypto.js</text>
+      <text x="610" y="918" class="node-subtitle" text-anchor="middle">Local DB encryption</text>
+      <text x="610" y="932" class="node-badge" text-anchor="middle">session key management</text>
+    </g>
+
+    <g class="node-group" data-id="schema-js">
+      <rect x="700" y="880" width="130" height="62" class="node-rect" fill="#2a1400" stroke="#c2410c" stroke-width="1.5"/>
+      <text x="765" y="902" class="node-title" text-anchor="middle">schema.js</text>
+      <text x="765" y="918" class="node-subtitle" text-anchor="middle">DB schema + FTS</text>
+      <text x="765" y="932" class="node-badge" text-anchor="middle">SQLite table defs</text>
+    </g>
+
+    <g class="node-group" data-id="search-js">
+      <rect x="850" y="880" width="130" height="62" class="node-rect" fill="#2a1400" stroke="#c2410c" stroke-width="1.5"/>
+      <text x="915" y="902" class="node-title" text-anchor="middle">search.js</text>
+      <text x="915" y="918" class="node-subtitle" text-anchor="middle">Full-text search</text>
+      <text x="915" y="932" class="node-badge" text-anchor="middle">FTS queries</text>
+    </g>
+
+    <g class="node-group" data-id="message-ops">
+      <rect x="1000" y="880" width="150" height="62" class="node-rect" fill="#2a1400" stroke="#c2410c" stroke-width="1.5"/>
+      <text x="1075" y="902" class="node-title" text-anchor="middle">message-ops.js</text>
+      <text x="1075" y="918" class="node-subtitle" text-anchor="middle">Offline load/insert</text>
+      <text x="1075" y="932" class="node-badge" text-anchor="middle">INSERT_MESSAGE pipeline</text>
+    </g>
+
+    <g class="node-group" data-id="purge-js">
+      <rect x="1170" y="880" width="130" height="62" class="node-rect" fill="#2a1400" stroke="#c2410c" stroke-width="1.5"/>
+      <text x="1235" y="902" class="node-title" text-anchor="middle">purge.js</text>
+      <text x="1235" y="918" class="node-subtitle" text-anchor="middle">Purge local store</text>
+      <text x="1235" y="932" class="node-badge" text-anchor="middle">wipe SQLite data</text>
+    </g>
+
+    <!-- ═══════════════════════════════════════════════════════
+         LAYER 6  —  EXTERNAL DEPS (right column)
+    ═══════════════════════════════════════════════════════ -->
+    <text x="1430" y="245" class="layer-label">📦 External Dependencies</text>
+    <rect x="1420" y="262" width="260" height="700" class="section-bg" stroke="#374151"/>
+
+    <g class="node-group" data-id="matrix-sdk">
+      <rect x="1440" y="280" width="220" height="68" class="node-rect" fill="#1c1c24" stroke="#6b7280" stroke-width="1.5"/>
+      <text x="1550" y="303" class="node-title" text-anchor="middle">matrix-js-sdk</text>
+      <text x="1550" y="320" class="node-subtitle" text-anchor="middle">Matrix protocol client</text>
+      <text x="1550" y="336" class="node-badge" text-anchor="middle">rooms · events · sync</text>
+    </g>
+
+    <g class="node-group" data-id="matrix-crypto">
+      <rect x="1440" y="368" width="220" height="68" class="node-rect" fill="#1c1c24" stroke="#6b7280" stroke-width="1.5"/>
+      <text x="1550" y="389" class="node-title" text-anchor="middle">matrix-sdk-crypto-wasm</text>
+      <text x="1550" y="406" class="node-subtitle" text-anchor="middle">Rust E2EE (WASM)</text>
+      <text x="1550" y="422" class="node-badge" text-anchor="middle">Olm · Megolm · cross-signing</text>
+    </g>
+
+    <g class="node-group" data-id="sqlite-wasm">
+      <rect x="1440" y="456" width="220" height="68" class="node-rect" fill="#1c1c24" stroke="#6b7280" stroke-width="1.5"/>
+      <text x="1550" y="477" class="node-title" text-anchor="middle">@sqlite.org/sqlite-wasm</text>
+      <text x="1550" y="494" class="node-subtitle" text-anchor="middle">SQLite in WASM / OPFS</text>
+      <text x="1550" y="510" class="node-badge" text-anchor="middle">persistent browser DB</text>
+    </g>
+
+    <g class="node-group" data-id="antd">
+      <rect x="1440" y="544" width="220" height="68" class="node-rect" fill="#1c1c24" stroke="#6b7280" stroke-width="1.5"/>
+      <text x="1550" y="565" class="node-title" text-anchor="middle">antd</text>
+      <text x="1550" y="582" class="node-subtitle" text-anchor="middle">Ant Design UI library</text>
+      <text x="1550" y="598" class="node-badge" text-anchor="middle">Layout · Modal · Drawer · Icons</text>
+    </g>
+
+    <g class="node-group" data-id="redux-toolkit">
+      <rect x="1440" y="632" width="220" height="68" class="node-rect" fill="#1c1c24" stroke="#6b7280" stroke-width="1.5"/>
+      <text x="1550" y="653" class="node-title" text-anchor="middle">@reduxjs/toolkit</text>
+      <text x="1550" y="670" class="node-subtitle" text-anchor="middle">Redux + Toolkit</text>
+      <text x="1550" y="686" class="node-badge" text-anchor="middle">createSlice · configureStore</text>
+    </g>
+
+    <g class="node-group" data-id="axios">
+      <rect x="1440" y="720" width="220" height="68" class="node-rect" fill="#1c1c24" stroke="#6b7280" stroke-width="1.5"/>
+      <text x="1550" y="741" class="node-title" text-anchor="middle">axios</text>
+      <text x="1550" y="758" class="node-subtitle" text-anchor="middle">HTTP client</text>
+      <text x="1550" y="774" class="node-badge" text-anchor="middle">auth (commented out in POC)</text>
+    </g>
+
+    <g class="node-group" data-id="react-router">
+      <rect x="1440" y="808" width="220" height="68" class="node-rect" fill="#1c1c24" stroke="#4b5563" stroke-width="1.5" stroke-dasharray="6 3"/>
+      <text x="1550" y="829" class="node-title" text-anchor="middle">react-router-dom</text>
+      <text x="1550" y="846" class="node-subtitle" text-anchor="middle">Routing (unused)</text>
+      <text x="1550" y="862" class="node-badge" text-anchor="middle">in package.json; not imported</text>
+    </g>
+
+    <!-- ═══════════════════════════════════════════════════════
+         SHARED STYLES
+    ═══════════════════════════════════════════════════════ -->
+    <text x="60" y="1010" class="layer-label">🎨 Shared Styles — src/shared/styles/</text>
+    <rect x="50" y="1026" width="380" height="90" class="section-bg" stroke="#6b21a8"/>
+
+    <g class="node-group" data-id="global-scss">
+      <rect x="70" y="1040" width="160" height="62" class="node-rect" fill="#200840" stroke="#9333ea" stroke-width="1.5"/>
+      <text x="150" y="1062" class="node-title" text-anchor="middle">global.scss</text>
+      <text x="150" y="1079" class="node-subtitle" text-anchor="middle">Global base styles</text>
+      <text x="150" y="1094" class="node-badge" text-anchor="middle">reset · typography</text>
+    </g>
+
+    <g class="node-group" data-id="variables-scss">
+      <rect x="250" y="1040" width="160" height="62" class="node-rect" fill="#200840" stroke="#9333ea" stroke-width="1.5"/>
+      <text x="330" y="1062" class="node-title" text-anchor="middle">_variables.scss</text>
+      <text x="330" y="1079" class="node-subtitle" text-anchor="middle">Design tokens</text>
+      <text x="330" y="1094" class="node-badge" text-anchor="middle">colors · spacing</text>
+    </g>
+
+
+    <!-- ═══════════════════════════════════════════════════════
+         EDGES / ARROWS
+    ═══════════════════════════════════════════════════════ -->
+
+    <!-- index.html → main.jsx -->
+    <path d="M 140,180 L 140,278" class="edge" stroke="#7c3aed" marker-end="url(#arrow-purple)"/>
+
+    <!-- main.jsx → App.jsx -->
+    <path d="M 230,317 L 270,317" class="edge" stroke="#7c3aed" marker-end="url(#arrow-purple)"/>
+    <text x="250" y="310" class="edge-label" text-anchor="middle">renders</text>
+
+    <!-- App.jsx → ChatLayout -->
+    <path d="M 350,356 L 170,468" class="edge" stroke="#10b981" marker-end="url(#arrow-green)"/>
+    <text x="295" y="430" class="edge-label" text-anchor="middle">renders</text>
+
+    <!-- main.jsx → store -->
+    <path d="M 230,340 Q 380,440 550,340" class="edge" stroke="#06b6d4" marker-end="url(#arrow-cyan)"/>
+    <text x="390" y="380" class="edge-label" text-anchor="middle">Provider wraps</text>
+
+    <!-- store → chatSlice -->
+    <path d="M 710,317 L 760,317" class="edge" stroke="#06b6d4" marker-end="url(#arrow-cyan)"/>
+    <text x="735" y="308" class="edge-label" text-anchor="middle">registers</text>
+
+    <!-- ChatLayout → ConversationList -->
+    <path d="M 270,530 L 300,530" class="edge" stroke="#34d399" marker-end="url(#arrow-green)"/>
+
+    <!-- ChatLayout → ChatWindow -->
+    <path d="M 270,540 Q 290,550 510,530" class="edge" stroke="#34d399" marker-end="url(#arrow-green)"/>
+
+    <!-- ChatLayout → SidebarMenu -->
+    <path d="M 270,545 Q 290,560 720,530" class="edge" stroke="#34d399" marker-end="url(#arrow-green)"/>
+
+    <!-- ChatLayout → CreateGroupModal -->
+    <path d="M 270,547 Q 290,570 930,507" class="edge" stroke="#34d399" marker-end="url(#arrow-green)"/>
+
+    <!-- ChatLayout → InviteMemberModal -->
+    <path d="M 270,548 Q 290,580 930,597" class="edge" stroke="#34d399" marker-end="url(#arrow-green)"/>
+
+    <!-- ChatLayout → MemberListDrawer -->
+    <path d="M 270,549 Q 290,590 1120,507" class="edge" stroke="#34d399" marker-end="url(#arrow-green)"/>
+
+    <!-- ChatLayout uses useMatrixInit -->
+    <path d="M 170,626 L 170,730" class="edge" stroke="#f59e0b" stroke-width="2" marker-end="url(#arrow-orange)"/>
+    <text x="185" y="680" class="edge-label">calls hook</text>
+
+    <!-- useMatrixInit → matrixWorker -->
+    <path d="M 430,771 L 540,780" class="edge" stroke="#f97316" stroke-width="2" marker-end="url(#arrow-orange)"/>
+    <text x="490" y="760" class="edge-label" text-anchor="middle">new Worker()</text>
+
+    <!-- useMatrixInit → sqliteWorkerRouter -->
+    <path d="M 430,780 Q 490,820 810,790" class="edge" stroke="#f97316" stroke-width="2" marker-end="url(#arrow-orange)"/>
+    <text x="600" y="835" class="edge-label" text-anchor="middle">new Worker()</text>
+
+    <!-- useMatrixInit → chatSlice (dispatch) -->
+    <path d="M 250,730 Q 250,600 890,356" class="edge" stroke="#06b6d4" stroke-dasharray="5 3" marker-end="url(#arrow-cyan)"/>
+    <text x="580" y="660" class="edge-label">dispatch(actions)</text>
+
+    <!-- matrixWorker → message-ops -->
+    <path d="M 660,858 Q 800,870 1000,900" class="edge" stroke="#c2410c" marker-end="url(#arrow-red)"/>
+    <text x="830" y="860" class="edge-label">INSERT_MESSAGE</text>
+
+    <!-- sqliteWorkerRouter → schema.js -->
+    <path d="M 930,858 L 820,880" class="edge" stroke="#c2410c" marker-end="url(#arrow-red)"/>
+
+    <!-- sqliteWorkerRouter → search.js -->
+    <path d="M 960,858 L 915,880" class="edge" stroke="#c2410c" marker-end="url(#arrow-red)"/>
+
+    <!-- sqliteWorkerRouter → crypto.js -->
+    <path d="M 900,858 L 700,880" class="edge" stroke="#c2410c" marker-end="url(#arrow-red)"/>
+
+    <!-- sqliteWorkerRouter → purge.js -->
+    <path d="M 1000,858 L 1170,905" class="edge" stroke="#c2410c" marker-end="url(#arrow-red)"/>
+
+    <!-- Components → Redux (reads) -->
+    <path d="M 390,556 Q 730,640 760,356" class="edge" stroke="#06b6d4" stroke-dasharray="4 3" marker-end="url(#arrow-cyan)"/>
+    <text x="670" y="600" class="edge-label">useSelector</text>
+
+    <!-- matrixWorker uses matrix-sdk external -->
+    <path d="M 780,780 Q 1100,750 1440,314" class="edge" stroke="#6b7280" stroke-dasharray="4 3" marker-end="url(#arrow-gray)"/>
+
+    <!-- matrixWorker uses matrix-crypto-wasm -->
+    <path d="M 780,800 Q 1150,760 1440,402" class="edge" stroke="#6b7280" stroke-dasharray="4 3" marker-end="url(#arrow-gray)"/>
+
+    <!-- sqliteWorkerRouter uses sqlite-wasm -->
+    <path d="M 1050,795 Q 1250,780 1440,490" class="edge" stroke="#6b7280" stroke-dasharray="4 3" marker-end="url(#arrow-gray)"/>
+
+    <!-- ChatLayout → antd -->
+    <path d="M 270,520 Q 800,440 1440,578" class="edge" stroke="#6b7280" stroke-dasharray="4 3" marker-end="url(#arrow-gray)"/>
+
+    <!-- Redux → redux-toolkit external -->
+    <path d="M 1020,317 Q 1200,360 1440,666" class="edge" stroke="#6b7280" stroke-dasharray="4 3" marker-end="url(#arrow-gray)"/>
+
+    <!-- global.scss used by main -->
+    <path d="M 150,1040 Q 100,900 80,356" class="edge" stroke="#9333ea" stroke-dasharray="4 3" marker-end="url(#arrow-purple)"/>
+
+    <!-- variables used by components -->
+    <path d="M 250,1070 Q 200,900 80,626" class="edge" stroke="#9333ea" stroke-dasharray="4 3" marker-end="url(#arrow-purple)"/>
+
+    <!-- DATA FLOW annotation box -->
+    <rect x="530" y="1060" width="620" height="130" rx="12" fill="#111827" stroke="#1f2937" stroke-width="1.5"/>
+    <text x="840" y="1084" class="layer-label" text-anchor="middle">DATA FLOW SUMMARY</text>
+    <text x="548" y="1105" class="node-badge">1. main.jsx bootstraps Redux Provider → App → ChatLayout</text>
+    <text x="548" y="1120" class="node-badge">2. ChatLayout calls useMatrixInit, which spawns two Web Workers</text>
+    <text x="548" y="1135" class="node-badge">3. matrixWorker connects to Matrix homeserver, receives events, posts to hook</text>
+    <text x="548" y="1150" class="node-badge">4. sqliteWorkerRouter persists messages via SQLite WASM / OPFS</text>
+    <text x="548" y="1165" class="node-badge">5. Hook dispatches Redux actions; UI reads from store via useSelector</text>
+    <text x="548" y="1180" class="node-badge">6. COOP/COEP headers (vite.config.js) enable SharedArrayBuffer for WASM</text>
+
+  </svg>
+</div>
+
+<div id="tooltip"></div>
+
+<script>
+const nodeData = {
+  'index-html':     { title: 'index.html', path: 'index.html', desc: 'Vite HTML entry point. Loads main.jsx via the Vite module graph.' },
+  'vite-config':    { title: 'vite.config.js', path: 'vite.config.js', desc: 'Configures Vite + React plugin. Sets COOP/COEP response headers required for SharedArrayBuffer and SQLite WASM in OPFS.' },
+  'eslint-config':  { title: 'eslint.config.js', path: 'eslint.config.js', desc: 'Flat ESLint configuration for the project.' },
+  'pkg-json':       { title: 'package.json', path: 'package.json', desc: 'Project "matrix-poc". Key deps: React, Redux Toolkit, matrix-js-sdk, matrix-sdk-crypto-wasm, @sqlite.org/sqlite-wasm, antd, axios.' },
+  'main-jsx':       { title: 'main.jsx', path: 'src/main.jsx', desc: 'React entry. Wraps the app in Redux <Provider store={store}> and renders <App />.' },
+  'app-jsx':        { title: 'App.jsx', path: 'src/App.jsx', desc: 'Root component. Currently only renders <ChatLayout />. No routing configured yet.' },
+  'store':          { title: 'store.js', path: 'src/app/store.js', desc: 'Redux store created with configureStore. Registers the "chat" slice reducer.' },
+  'chat-slice':     { title: 'chatSlice.js', path: 'src/features/chat/chatSlice.js', desc: 'Redux slice for the chat domain. State: rooms, messages, activeRoom, members, directoryUsers, currentUserId, searchState, matrixAccessToken, isReady.' },
+  'chat-layout':    { title: 'ChatLayout.jsx', path: 'src/features/chat/components/ChatLayout/ChatLayout.jsx', desc: 'Root layout shell. Uses Ant Design Layout. Calls useMatrixInit hook. Currently has hard-coded Matrix credentials (POC).' },
+  'conv-list':      { title: 'ConversationList.jsx', path: 'src/features/chat/components/ConversationList/ConversationList.jsx', desc: 'Renders the list of rooms/DMs from Redux store.' },
+  'chat-window':    { title: 'ChatWindow.jsx', path: 'src/features/chat/components/ChatWindow/ChatWindow.jsx', desc: 'Displays the message thread for the active room. Reads messages from Redux.' },
+  'sidebar-menu':   { title: 'SidebarMenu.jsx', path: 'src/features/chat/components/SidebarMenu/SidebarMenu.jsx', desc: 'Navigation sidebar using Ant Design icons.' },
+  'create-group':   { title: 'CreateGroupModal.jsx', path: 'src/features/chat/components/CreateGroupModal/CreateGroupModal.jsx', desc: 'Modal for creating a new Matrix group room.' },
+  'invite-modal':   { title: 'InviteMemberModal.jsx', path: 'src/features/chat/components/InviteMemberModal/InviteMemberModal.jsx', desc: 'Modal for inviting a user to a Matrix room.' },
+  'member-drawer':  { title: 'MemberListDrawer.jsx', path: 'src/features/chat/components/MemberListDrawer/MemberListDrawer.jsx', desc: 'Ant Design Drawer showing the member list of the active room.' },
+  'use-matrix-init':{ title: 'useMatrixInit.js', path: 'src/features/chat/hooks/useMatrixInit.js', desc: 'Core orchestration hook. Spawns matrixWorker and sqliteWorkerRouter. Receives postMessage events from workers and dispatches Redux actions (setRooms, pushMessage, setMembers, etc.).' },
+  'matrix-worker':  { title: 'matrixWorker.js', path: 'src/features/chat/workers/matrixWorker.js', desc: 'Runs matrix-js-sdk + Rust crypto WASM in a Web Worker. Handles homeserver sync, E2EE key management, and posts NEW_MESSAGE / ROOMS to the hook.' },
+  'sqlite-router':  { title: 'sqliteWorkerRouter.js', path: 'src/features/chat/workers/sqliteWorkerRouter.js', desc: 'SQLite WASM router running in a Web Worker. Uses OPFS for persistent storage. Delegates DB operations to helper modules (schema, search, message-ops, purge).' },
+  'crypto-js':      { title: 'crypto.js', path: 'src/features/chat/workers/crypto.js', desc: 'Manages session encryption keys for the local SQLite database.' },
+  'schema-js':      { title: 'schema.js', path: 'src/features/chat/workers/schema.js', desc: 'Defines SQLite table schemas and FTS5 full-text search tables.' },
+  'search-js':      { title: 'search.js', path: 'src/features/chat/workers/search.js', desc: 'Full-text search queries against the local SQLite FTS index.' },
+  'message-ops':    { title: 'message-ops.js', path: 'src/features/chat/workers/message-ops.js', desc: 'Handles offline message loading and the INSERT_MESSAGE pipeline from matrixWorker.' },
+  'purge-js':       { title: 'purge.js', path: 'src/features/chat/workers/purge.js', desc: 'Wipes all local SQLite data (full purge operation).' },
+  'matrix-sdk':     { title: 'matrix-js-sdk', path: 'package.json', desc: 'Official Matrix JavaScript SDK. Provides client sync, room/event APIs, and push rules.' },
+  'matrix-crypto':  { title: 'matrix-sdk-crypto-wasm', path: 'package.json', desc: 'Rust-based E2EE WASM module. Handles Olm/Megolm encryption, device verification, and cross-signing.' },
+  'sqlite-wasm':    { title: '@sqlite.org/sqlite-wasm', path: 'package.json', desc: 'Official SQLite compiled to WASM. Runs in a Worker with OPFS for persistent browser-side storage.' },
+  'antd':           { title: 'antd (Ant Design)', path: 'package.json', desc: 'React UI component library. Used for Layout, Modal, Drawer, Button, Input, and icons.' },
+  'redux-toolkit':  { title: '@reduxjs/toolkit', path: 'package.json', desc: 'Redux Toolkit simplifies store setup and slice creation. Used with react-redux for UI bindings.' },
+  'axios':          { title: 'axios', path: 'package.json', desc: 'HTTP client. Present in deps; login call in ChatLayout is currently commented out (POC mode).' },
+  'react-router':   { title: 'react-router-dom', path: 'package.json', desc: 'Client-side routing library. Listed in package.json but NOT imported anywhere in source. Reserved for future navigation.' },
+  'global-scss':    { title: 'global.scss', path: 'src/shared/styles/global.scss', desc: 'Global base styles — CSS reset, body/html defaults, typography.' },
+  'variables-scss': { title: '_variables.scss', path: 'src/shared/styles/_variables.scss', desc: 'Sass design tokens — color palette, spacing scale, etc.' },
+};
+
+// Pan & zoom
+const wrap = document.getElementById('canvas-wrap');
+const svg  = document.getElementById('svg-root');
+let scale = 0.55, tx = 60, ty = 20;
+let panning = false, startX, startY, startTx, startTy;
+
+function applyTransform() {
+  svg.style.transform = `translate(${tx}px,${ty}px) scale(${scale})`;
+}
+applyTransform();
+
+function zoom(factor) {
+  const cx = wrap.clientWidth  / 2;
+  const cy = wrap.clientHeight / 2;
+  tx = cx - (cx - tx) * factor;
+  ty = cy - (cy - ty) * factor;
+  scale *= factor;
+  applyTransform();
+}
+
+function resetView() { scale = 0.55; tx = 60; ty = 20; applyTransform(); }
+
+wrap.addEventListener('wheel', e => {
+  e.preventDefault();
+  const factor = e.deltaY < 0 ? 1.1 : 0.91;
+  const rect = wrap.getBoundingClientRect();
+  const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+  tx = mx - (mx - tx) * factor;
+  ty = my - (my - ty) * factor;
+  scale *= factor;
+  applyTransform();
+}, { passive: false });
+
+wrap.addEventListener('mousedown', e => {
+  if (e.button !== 0) return;
+  panning = true;
+  startX = e.clientX; startY = e.clientY;
+  startTx = tx; startTy = ty;
+  wrap.classList.add('panning');
+});
+window.addEventListener('mousemove', e => {
+  if (!panning) return;
+  tx = startTx + (e.clientX - startX);
+  ty = startTy + (e.clientY - startY);
+  applyTransform();
+});
+window.addEventListener('mouseup', () => { panning = false; wrap.classList.remove('panning'); });
+
+// Tooltip
+const tooltip = document.getElementById('tooltip');
+document.querySelectorAll('.node-group').forEach(g => {
+  const id = g.dataset.id;
+  if (!id || !nodeData[id]) return;
+  const d = nodeData[id];
+  g.addEventListener('mouseenter', e => {
+    tooltip.innerHTML = `<strong>${d.title}</strong>${d.desc}<div class="path">${d.path}</div>`;
+    tooltip.style.display = 'block';
+  });
+  g.addEventListener('mousemove', e => {
+    const x = e.clientX + 14, y = e.clientY + 14;
+    const tw = tooltip.offsetWidth, th = tooltip.offsetHeight;
+    tooltip.style.left = (x + tw > window.innerWidth  ? x - tw - 28 : x) + 'px';
+    tooltip.style.top  = (y + th > window.innerHeight ? y - th - 28 : y) + 'px';
+  });
+  g.addEventListener('mouseleave', () => { tooltip.style.display = 'none'; });
+});
+</script>
+</body>
+</html>
