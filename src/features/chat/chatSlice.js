@@ -1,17 +1,36 @@
 import { createSlice } from '@reduxjs/toolkit';
 
+// Body patterns that indicate a stored message was never successfully decrypted.
+// Used by setRoomMessages to ensure live-decrypted messages always win over placeholders.
+const UNDECRYPTABLE_PATTERNS = ['Unable to decrypt', 'DecryptionError'];
+const msgIsUndecryptable = (m) =>
+  m.undecryptable === true ||
+  (typeof m.body === 'string' && UNDECRYPTABLE_PATTERNS.some(p => m.body.includes(p)));
+
+const CALL_STATE_IDLE = {
+  status: 'idle',   // 'idle' | 'ringing_in' | 'ringing_out' | 'ongoing' | 'ended'
+  callId: null,
+  roomId: null,
+  callType: null,   // 'voice' | 'video'
+  callerId: null,
+  offerSdp: null,
+};
+
 const initialState = {
   rooms: [],
   activeRoomId: null,
   messagesByRoom: {},
   isReady: false,
-  currentUserId: null, // Tracks logged-in user for chat bubble alignment
-  invites: [],          // Pending room invites
-  searchResults: [],    // FTS5 Global Search cache
-  isSearching: false,   // Search loading state
-  membersByRoom: {} ,    // Holds user lists mapped by roomId
+  currentUserId: null,
+  invites: [],
+  searchResults: [],
+  isSearching: false,
+  membersByRoom: {},
   directoryUsers: [],
   matrixAccessToken: null,
+  // ── VoIP call state ──────────────────────────────────────────────────────
+  callState: { ...CALL_STATE_IDLE },
+  pendingCallEvent: null,  // latest raw Matrix call event forwarded from worker
 };
 
 const chatSlice = createSlice({
@@ -50,12 +69,13 @@ const chatSlice = createSlice({
     setRoomMessages(state, action) {
       const { roomId, messages } = action.payload;
       // Merge SQLite-loaded history with any in-memory live messages, deduplicating by eventId.
-      // Real (decrypted) messages take priority over undecryptable placeholders.
+      // Real (decrypted) messages always win over undecryptable placeholders regardless of
+      // whether the placeholder came from SQLite (undecryptable flag) or body string check.
       const existing = state.messagesByRoom[roomId] || [];
       const merged = new Map();
       for (const m of [...messages, ...existing]) {
         const prev = merged.get(m.eventId);
-        if (!prev || (prev.undecryptable && !m.undecryptable)) {
+        if (!prev || (msgIsUndecryptable(prev) && !msgIsUndecryptable(m))) {
           merged.set(m.eventId, m);
         }
       }
@@ -80,9 +100,42 @@ const chatSlice = createSlice({
 
     setMatrixAccessToken(state, action) {
       state.matrixAccessToken = action.payload;
-    }
+    },
+
+    // Remove a single message by eventId (used to clean up call event placeholders)
+    removeMessage(state, action) {
+      const { roomId, eventId } = action.payload;
+      if (state.messagesByRoom[roomId]) {
+        state.messagesByRoom[roomId] = state.messagesByRoom[roomId].filter(
+          m => m.eventId !== eventId
+        );
+      }
+    },
+
+    // ── VoIP / WebRTC call actions ────────────────────────────────────────
+    setCallStatus(state, action) {
+      Object.assign(state.callState, action.payload);
+    },
+    setIncomingCall(state, action) {
+      state.callState = { status: 'ringing_in', ...action.payload };
+    },
+    clearCall(state) {
+      state.callState = { ...CALL_STATE_IDLE };
+    },
+    setPendingCallEvent(state, action) {
+      state.pendingCallEvent = action.payload;
+    },
+    clearPendingCallEvent(state) {
+      state.pendingCallEvent = null;
+    },
   }
 });
 
-export const { setRooms, setActiveRoom, pushMessage, setRoomMessages, setReady, setCurrentUserId, setSearchResults, setIsSearching, setRoomMembers, setDirectoryUsers, setMatrixAccessToken } = chatSlice.actions;
+export const {
+  setRooms, setActiveRoom, pushMessage, setRoomMessages, setReady,
+  setCurrentUserId, setSearchResults, setIsSearching, setRoomMembers,
+  setDirectoryUsers, setMatrixAccessToken,
+  removeMessage,
+  setCallStatus, setIncomingCall, clearCall, setPendingCallEvent, clearPendingCallEvent,
+} = chatSlice.actions;
 export default chatSlice.reducer;

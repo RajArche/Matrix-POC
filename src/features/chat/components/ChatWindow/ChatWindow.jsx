@@ -9,10 +9,11 @@ import { setActiveRoom } from '../../chatSlice';
 
 const { Text } = Typography;
 
-export const ChatWindow = ({ sendMessage, getRoomMembers, inviteUser, leaveRoom, uploadFile, joinRoom, forwardMessage }) => {
+export const ChatWindow = ({ sendMessage, getRoomMembers, inviteUser, leaveRoom, uploadFile, joinRoom, forwardMessage, placeVoiceCall, placeVideoCall }) => {
   const dispatch = useDispatch();
   const [text, setText] = useState("");
   const lastSendAtRef = useRef(0);
+  const [callError, setCallError] = useState(null);
   const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
   const [isMemberListOpen, setIsMemberListOpen] = useState(false);
   const fileInputRef = useRef(null);
@@ -22,11 +23,35 @@ export const ChatWindow = ({ sendMessage, getRoomMembers, inviteUser, leaveRoom,
   const [forwardSourceBodyPreview, setForwardSourceBodyPreview] = useState(null);
 
   // 1. Get active room, logged-in user from Redux
-  const activeRoomId = useSelector(state => state.chat.activeRoomId);
-  const currentUserId = useSelector(state => state.chat.currentUserId);
-  const rooms = useSelector(state => state.chat.rooms);
-  const activeRoom = rooms.find(r => r.id === activeRoomId);
+  const activeRoomId   = useSelector(state => state.chat.activeRoomId);
+  const currentUserId  = useSelector(state => state.chat.currentUserId);
+  const rooms          = useSelector(state => state.chat.rooms);
+  const membersByRoom  = useSelector(state => state.chat.membersByRoom);
+  const callState      = useSelector(state => state.chat.callState);
+  const activeRoom     = rooms.find(r => r.id === activeRoomId);
   const encryptionEnabled = !!activeRoom?.encryptionEnabled;
+
+  // Call precondition: calls are only available when the room is encrypted,
+  // the current user has joined, and at least one other member is present.
+  const roomMembers    = membersByRoom[activeRoomId] || [];
+  const joinedMembers  = roomMembers.filter(m => m.membership === 'join');
+  const callsAvailable =
+    encryptionEnabled &&
+    activeRoom?.membership === 'join' &&
+    joinedMembers.length >= 2 &&
+    callState.status === 'idle';
+
+  const handleCall = async (type) => {
+    setCallError(null);
+    const fn = type === 'video' ? placeVideoCall : placeVoiceCall;
+    try {
+      await fn(activeRoomId);
+    } catch (e) {
+      setCallError(e.message);
+      // Auto-clear after 4 s
+      setTimeout(() => setCallError(null), 4000);
+    }
+  };
 
   // 2. Fetch messages and members for this room
   const messages = useSelector(state => activeRoomId ? state.chat.messagesByRoom[activeRoomId] || [] : []);
@@ -196,6 +221,11 @@ export const ChatWindow = ({ sendMessage, getRoomMembers, inviteUser, leaveRoom,
           Encrypted chat is not ready yet. Sending is disabled until E2EE is enabled for this room.
         </div>
       )}
+      {callError && (
+        <div style={{ padding: '10px 24px', backgroundColor: '#fff2f0', color: '#a8071a', borderBottom: '1px solid #ffccc7', fontSize: '13px' }}>
+          ⚠ {callError}
+        </div>
+      )}
       {/* Header */}
       <div style={{ padding: '20px 24px', borderBottom: '1px solid #e0e6ed', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -220,8 +250,24 @@ export const ChatWindow = ({ sendMessage, getRoomMembers, inviteUser, leaveRoom,
             onClick={() => setIsInviteModalOpen(true)}
             title="Invite someone to this room"
           />
-          <PhoneOutlined style={{ cursor: 'pointer' }} />
-          <VideoCameraOutlined style={{ cursor: 'pointer' }} />
+          <Tooltip title={callsAvailable ? 'Voice call' : joinedMembers.length < 2 ? 'User not available yet' : 'Call unavailable'}>
+            <PhoneOutlined
+              onClick={() => callsAvailable && handleCall('voice')}
+              style={{
+                cursor: callsAvailable ? 'pointer' : 'not-allowed',
+                color:  callsAvailable ? '#2d3436' : '#b2bec3',
+              }}
+            />
+          </Tooltip>
+          <Tooltip title={callsAvailable ? 'Video call' : joinedMembers.length < 2 ? 'User not available yet' : 'Call unavailable'}>
+            <VideoCameraOutlined
+              onClick={() => callsAvailable && handleCall('video')}
+              style={{
+                cursor: callsAvailable ? 'pointer' : 'not-allowed',
+                color:  callsAvailable ? '#2d3436' : '#b2bec3',
+              }}
+            />
+          </Tooltip>
           <Dropdown menu={{ items: menuItems }} trigger={['click']}>
             <MoreOutlined style={{ cursor: 'pointer' }} />
           </Dropdown>

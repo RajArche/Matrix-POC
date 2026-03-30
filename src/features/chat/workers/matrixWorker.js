@@ -6,6 +6,13 @@ import * as RustCrypto from "@matrix-org/matrix-sdk-crypto-wasm";
 let matrixClient = null;
 let myUserId = null;
 
+// Call signaling event types — these must NEVER appear as chat bubbles.
+// Defined at module scope so both Room.timeline and Event.decrypted can reference them.
+const CALL_EVENT_TYPES = new Set([
+  'm.call.invite', 'm.call.answer', 'm.call.candidates',
+  'm.call.hangup', 'm.call.reject', 'm.call.negotiate',
+]);
+
 // Rooms that were created as 1:1 but were not encrypted yet.
 // We bootstrap encryption after the other side joins.
 // Map: roomId -> targetUserId (the other participant)
@@ -368,6 +375,24 @@ self.onmessage = async (event) => {
             return;
           }
 
+          // ── VoIP signaling: forward Matrix call events to the main thread ──
+          // This handles the case where the event has already decrypted synchronously
+          // by the time Room.timeline fires (msgType is the real type, not m.room.encrypted).
+          if (CALL_EVENT_TYPES.has(msgType)) {
+            self.postMessage({
+              type: 'CALL_EVENT',
+              payload: {
+                callEventType: msgType,
+                roomId: room.roomId,
+                sender: matrixEvent.getSender?.() ?? null,
+                content: matrixEvent.getContent(),
+                eventId: matrixEvent.getId?.(),
+                timestamp: matrixEvent.getTs?.() ?? Date.now(),
+              },
+            });
+            return;
+          }
+
           // If already decrypted to m.room.message, forward it immediately
           if (msgType === "m.room.message" && !matrixEvent.isRedacted()) {
             const content = matrixEvent.getContent();
@@ -427,9 +452,41 @@ self.onmessage = async (event) => {
 
         // 5b. DECRYPTION LISTENER:
         // In E2EE rooms, the real payload arrives AFTER the timeline event via Event.decrypted.
-        // This is the critical listener for encrypted healthcare messages.
+        // CRITICAL: this is the ONLY place where encrypted call events (m.call.invite etc.)
+        // can be correctly identified and forwarded — Room.timeline only sees m.room.encrypted.
         matrixClient.on("Event.decrypted", (matrixEvent) => {
-          if (matrixEvent.getType() === "m.room.message" && !matrixEvent.isRedacted()) {
+          const decryptedType = matrixEvent.getType();
+
+          // ── Call event path ──────────────────────────────────────────────────
+          // The event arrived as m.room.encrypted in Room.timeline (which emitted an
+          // undecryptable placeholder). Now that we have the real type, forward it as
+          // CALL_EVENT and tell the main thread to remove the placeholder.
+          if (CALL_EVENT_TYPES.has(decryptedType)) {
+            const eventId = matrixEvent.getId?.();
+            // Mark as decrypted so shouldEmitNewMessage never re-emits a placeholder
+            if (eventId) shouldEmitNewMessage(eventId);
+            self.postMessage({
+              type: 'CALL_EVENT',
+              payload: {
+                callEventType: decryptedType,
+                roomId: matrixEvent.getRoomId(),
+                sender: matrixEvent.getSender(),
+                content: matrixEvent.getContent(),
+                eventId,
+                timestamp: matrixEvent.getTs?.() ?? Date.now(),
+              },
+            });
+            // Ask main thread to remove the undecryptable placeholder from Redux + SQLite
+            if (eventId) {
+              self.postMessage({
+                type: 'REMOVE_CALL_PLACEHOLDER',
+                payload: { roomId: matrixEvent.getRoomId(), eventId },
+              });
+            }
+            return;
+          }
+
+          if (decryptedType === "m.room.message" && !matrixEvent.isRedacted()) {
             const content = matrixEvent.getContent();
             if (isUndecryptablePlaceholder(content)) {
               return;
@@ -768,6 +825,23 @@ self.onmessage = async (event) => {
           await matrixClient.sendMessage(payload.roomId, content);
         } catch(e) {
           self.postMessage({ type: "ERROR", payload: "File upload failed: " + e.message });
+        }
+      }
+      break;
+
+    // ── VoIP: send a Matrix call signaling event to a room ─────────────────
+    // The main thread drives WebRTC; it sends SDP offer/answer and ICE
+    // candidates back here so they are relayed via the existing Matrix client.
+    case "SEND_CALL_EVENT":
+      if (matrixClient) {
+        try {
+          await matrixClient.sendEvent(
+            payload.roomId,
+            payload.eventType,
+            payload.content
+          );
+        } catch (e) {
+          self.postMessage({ type: 'CALL_ERROR', payload: e.message });
         }
       }
       break;

@@ -1,0 +1,131 @@
+@import '../../../../shared/styles/variables';
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 999;
+  backdrop-filter: blur(6px);
+}
+
+.window {
+  background: #1a1a2e;
+  border-radius: 20px;
+  overflow: hidden;
+  width: min(520px, 94vw);
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6);
+  position: relative;
+}
+
+// ── Remote stream area ──────────────────────────────────────────────────────
+.remoteArea {
+  position: relative;
+  width: 100%;
+  min-height: 300px;
+  background: #0d0d1a;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.remoteVideo {
+  width: 100%;
+  height: 300px;
+  object-fit: cover;
+  display: block;
+}
+
+.audioAvatar {
+  width: 96px;
+  height: 96px;
+  border-radius: 50%;
+  background: $primary-green;
+  color: #fff;
+  font-size: 40px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.peerLabel {
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 15px;
+  font-weight: 600;
+  position: absolute;
+  bottom: 10px;
+  left: 16px;
+}
+
+.statusBadge {
+  position: absolute;
+  top: 12px;
+  right: 14px;
+  background: rgba($primary-green, 0.85);
+  color: #fff;
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+// ── Local video PiP ─────────────────────────────────────────────────────────
+.localVideo {
+  position: absolute;
+  bottom: 44px;
+  right: 14px;
+  width: 110px;
+  height: 82px;
+  border-radius: 8px;
+  object-fit: cover;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+}
+
+// ── Controls bar ─────────────────────────────────────────────────────────────
+.controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  padding: 20px;
+  background: #111128;
+}
+
+.ctrlBtn {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  font-size: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  transition: background 0.15s, transform 0.12s;
+
+  &:hover  { background: rgba(255, 255, 255, 0.2); }
+  &:active { transform: scale(0.93); }
+
+  &.active {
+    background: rgba(255, 255, 255, 0.25);
+    color: #fadb14;
+  }
+}
+
+.hangupBtn {
+  background: #e74c3c !important;
+  box-shadow: 0 4px 16px rgba(231, 76, 60, 0.45);
+
+  &:hover { background: darken(#e74c3c, 8%) !important; }
+}

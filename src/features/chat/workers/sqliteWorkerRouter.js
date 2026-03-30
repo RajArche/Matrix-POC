@@ -5,6 +5,7 @@
  * This file keeps the public worker message protocol stable:
  * - INIT_DB
  * - INSERT_MESSAGE
+ * - DELETE_MESSAGE
  * - SEARCH_MESSAGES
  * - LOAD_OFFLINE_MESSAGES
  * - PURGE_LOCAL_STORE
@@ -16,7 +17,7 @@ import sqlite3InitModule from '@sqlite.org/sqlite-wasm';
 import { initSessionKey, destroySessionKey } from './crypto';
 import { initSchema } from './schema';
 import { searchMessages } from './search';
-import { insertMessage, loadOfflineMessages } from './message-ops';
+import { insertMessage, loadOfflineMessages, deleteMessage } from './message-ops';
 import { purgeLocalStore } from './purge';
 
 let db = null;
@@ -56,6 +57,15 @@ self.onmessage = async (event) => {
         await insertMessage(db, payload);
       } catch (err) {
         console.error('INSERT_MESSAGE failed:', err);
+      }
+      break;
+
+    case 'DELETE_MESSAGE':
+      try {
+        if (!db) return;
+        deleteMessage(db, payload.eventId);
+      } catch (err) {
+        console.error('DELETE_MESSAGE failed:', err);
       }
       break;
 

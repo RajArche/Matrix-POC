@@ -1,6 +1,10 @@
 import { useEffect, useRef } from 'react';
 import { useDispatch } from 'react-redux';
-import { setRooms, pushMessage, setRoomMessages, setReady, setCurrentUserId, setSearchResults, setIsSearching, setRoomMembers, setActiveRoom, setDirectoryUsers } from '../chatSlice';
+import { setRooms, pushMessage, setRoomMessages, setReady, setCurrentUserId, setSearchResults, setIsSearching, setRoomMembers, setActiveRoom, setDirectoryUsers, setPendingCallEvent, removeMessage } from '../chatSlice';
+
+// Module-level set of eventIds that are Matrix call signaling events.
+// These must never appear as chat bubbles. Persists for the session lifetime.
+const callEventIds = new Set();
 
 export const useMatrixInit = (userId, accessToken, baseUrl = "http://172.16.7.246:8008", deviceId = null) => {
   const dispatch = useDispatch();
@@ -22,8 +26,10 @@ export const useMatrixInit = (userId, accessToken, baseUrl = "http://172.16.7.24
       if (type === 'DB_READY') {
         console.log("✅ Local SQLite OPFS Database Ready");
       } else if (type === 'OFFLINE_HISTORY_LOADED') {
-        // Instantly load the high-speed local cache into Redux! (Offline-First)
-        dispatch(setRoomMessages({ roomId: payload.roomId, messages: payload.history }));
+        // Filter out any call signaling events that were stored as undecryptable
+        // placeholders before this fix, so they never appear as chat bubbles.
+        const filtered = payload.history.filter(m => !callEventIds.has(m.eventId));
+        dispatch(setRoomMessages({ roomId: payload.roomId, messages: filtered }));
       } else if (type === 'SEARCH_RESULTS') {
         dispatch(setSearchResults(payload));
         dispatch(setIsSearching(false));
@@ -101,7 +107,22 @@ export const useMatrixInit = (userId, accessToken, baseUrl = "http://172.16.7.24
         // ✨ MAGIC PIPELINE ✨: Transparently sink the new message into the SQLite worker for permanent local storage!
         sqliteWorkerRef.current.postMessage({ type: 'INSERT_MESSAGE', payload });
 
-      } else if (type === 'ERROR') {
+      } else if (type === 'CALL_EVENT') {
+        // VoIP: forward raw Matrix call event to the main-thread call manager.
+        dispatch(setPendingCallEvent(payload));
+
+      } else if (type === 'REMOVE_CALL_PLACEHOLDER') {
+        // A decrypted call event (m.call.invite etc.) had previously been stored
+        // as an "[Unable to decrypt yet]" placeholder. Clean it up everywhere.
+        const { roomId, eventId } = payload;
+        callEventIds.add(eventId);                                    // block future LOAD re-adds
+        dispatch(removeMessage({ roomId, eventId }));                 // remove from Redux
+        sqliteWorkerRef.current?.postMessage({                        // remove from SQLite
+          type: 'DELETE_MESSAGE',
+          payload: { eventId },
+        });
+
+      } else if (type === 'ERROR' || type === 'CALL_ERROR') {
         console.error("Matrix Worker Error:", payload);
       }
     };
@@ -216,5 +237,17 @@ export const useMatrixInit = (userId, accessToken, baseUrl = "http://172.16.7.24
     }
   };
 
-  return { sendMessage, searchMessages, createGroupChat, createDirectChat, getRoomMembers, inviteUser, joinRoom, leaveRoom, uploadFile, searchDirectoryUsers, forwardMessage };
+  // VoIP: send a Matrix call signaling event through the existing worker.
+  // The main-thread useCallManager hook calls this to relay SDP offer/answer
+  // and ICE candidates without needing a second Matrix client.
+  const sendCallEvent = (roomId, eventType, content) => {
+    if (matrixWorkerRef.current) {
+      matrixWorkerRef.current.postMessage({
+        type: 'SEND_CALL_EVENT',
+        payload: { roomId, eventType, content },
+      });
+    }
+  };
+
+  return { sendMessage, searchMessages, createGroupChat, createDirectChat, getRoomMembers, inviteUser, joinRoom, leaveRoom, uploadFile, searchDirectoryUsers, forwardMessage, sendCallEvent };
 };

@@ -4,6 +4,9 @@ import { SidebarMenu } from '../SidebarMenu/SidebarMenu';
 import { ConversationList } from '../ConversationList/ConversationList';
 import { ChatWindow } from '../ChatWindow/ChatWindow';
 import { useMatrixInit } from '../../hooks/useMatrixInit';
+import { useCallManager } from '../../hooks/useCallManager';
+import { CallOverlay } from '../CallOverlay/CallOverlay';
+import { ActiveCall } from '../ActiveCall/ActiveCall';
 import { Input, Avatar, Badge, Popover, List, Spin } from 'antd';
 import { SearchOutlined, BellOutlined, GlobalOutlined, MessageOutlined, LogoutOutlined } from '@ant-design/icons';
 import { useSelector, useDispatch } from 'react-redux';
@@ -21,12 +24,22 @@ export const ChatLayout = ({ session, onLogout }) => {
 
   const [searchQuery, setSearchQuery] = useState("");
 
-  const { sendMessage, searchMessages, createGroupChat, createDirectChat, getRoomMembers, inviteUser, joinRoom, leaveRoom, uploadFile, searchDirectoryUsers, forwardMessage } = useMatrixInit(
+  const {
+    sendMessage, searchMessages, createGroupChat, createDirectChat,
+    getRoomMembers, inviteUser, joinRoom, leaveRoom, uploadFile,
+    searchDirectoryUsers, forwardMessage, sendCallEvent,
+  } = useMatrixInit(
     session.userId,
     session.accessToken,
     "http://172.16.7.246:8008",
     session.deviceId || null
   );
+
+  const {
+    placeVoiceCall, placeVideoCall,
+    answerCall, rejectCall, hangup,
+    localStream, remoteStream, callState,
+  } = useCallManager(sendCallEvent);
 
   // Dispatch the search query natively to the SQLite Worker
   const handleSearch = (e) => {
@@ -96,6 +109,18 @@ export const ChatLayout = ({ session, onLogout }) => {
 
   return (
     <div className={styles.layoutContainer}>
+      {/* ── VoIP overlays (rendered outside normal layout flow) ── */}
+      <CallOverlay
+        callState={callState}
+        onAnswer={answerCall}
+        onReject={rejectCall}
+      />
+      <ActiveCall
+        callState={callState}
+        localStream={localStream}
+        remoteStream={remoteStream}
+        onHangup={hangup}
+      />
       <div className={styles.sidebar}>
         <SidebarMenu />
       </div>
@@ -158,6 +183,8 @@ export const ChatLayout = ({ session, onLogout }) => {
               uploadFile={uploadFile}
               joinRoom={joinRoom}
               forwardMessage={forwardMessage}
+              placeVoiceCall={placeVoiceCall}
+              placeVideoCall={placeVideoCall}
             />
           </div>
         </div>
