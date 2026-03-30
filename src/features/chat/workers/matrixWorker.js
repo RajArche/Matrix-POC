@@ -97,8 +97,9 @@ const postVisibleRooms = () => {
           }
 
           // Fallback: older SDKs / unexpected room state.
-          const encEvents = room.currentState?.getStateEvents("m.room.encryption", "");
-          return Array.isArray(encEvents) && encEvents.length > 0;
+          // getStateEvents(type, stateKey) returns a single MatrixEvent or null — not an array.
+          const encEvent = room.currentState?.getStateEvents("m.room.encryption", "");
+          return !!encEvent;
         } catch {
           return false;
         }
@@ -138,8 +139,9 @@ const roomHasEncryption = (room) => {
       return room.hasEncryptionStateEvent();
     }
 
-    const encEvents = room.currentState?.getStateEvents("m.room.encryption", "");
-    return Array.isArray(encEvents) && encEvents.length > 0;
+    // getStateEvents(type, stateKey) returns a single MatrixEvent or null — not an array.
+    const encEvent = room.currentState?.getStateEvents("m.room.encryption", "");
+    return !!encEvent;
   } catch {
     return false;
   }
@@ -471,7 +473,17 @@ self.onmessage = async (event) => {
           }
         });
 
-        // 7. INVITE LISTENER: Surface incoming room invites to the UI
+        // 7. ROOM STATE LISTENER: Re-broadcast rooms the instant an encryption
+        // state event lands (e.g. when the DM partner accepts an invite and
+        // User A enables E2EE, or a group room's state propagates to User B).
+        // Without this, the "not ready" banner stays until the next sync cycle.
+        matrixClient.on("RoomState.events", (stateEvent) => {
+          if (stateEvent.getType() === "m.room.encryption") {
+            postVisibleRooms();
+          }
+        });
+
+        // 8. INVITE LISTENER: Surface incoming room invites to the UI
         matrixClient.on("RoomMember.membership", (event, member) => {
           if (member.userId === payload.userId && member.membership === "invite") {
             self.postMessage({

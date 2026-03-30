@@ -5,12 +5,12 @@ import { ConversationList } from '../ConversationList/ConversationList';
 import { ChatWindow } from '../ChatWindow/ChatWindow';
 import { useMatrixInit } from '../../hooks/useMatrixInit';
 import { Input, Avatar, Badge, Popover, List, Spin } from 'antd';
-import { SearchOutlined, BellOutlined, GlobalOutlined, MessageOutlined } from '@ant-design/icons';
+import { SearchOutlined, BellOutlined, GlobalOutlined, MessageOutlined, LogoutOutlined } from '@ant-design/icons';
 import { useSelector, useDispatch } from 'react-redux';
 import { setActiveRoom } from '../../chatSlice';
 import axios from 'axios';
 
-export const ChatLayout = () => {
+export const ChatLayout = ({ session, onLogout }) => {
   const dispatch = useDispatch();
   const searchResults = useSelector(state => state.chat.searchResults);
   const isSearching = useSelector(state => state.chat.isSearching);
@@ -22,10 +22,10 @@ export const ChatLayout = () => {
   const [searchQuery, setSearchQuery] = useState("");
 
   const { sendMessage, searchMessages, createGroupChat, createDirectChat, getRoomMembers, inviteUser, joinRoom, leaveRoom, uploadFile, searchDirectoryUsers, forwardMessage } = useMatrixInit(
-    "@admin:localhost",
-    "syt_YWRtaW4_hvVgepCsgOrhNDhNPOjs_22VskB",
+    session.userId,
+    session.accessToken,
     "http://172.16.7.246:8008",
-    "FPQKSKQZHQ"
+    session.deviceId || null
   );
 
   // Dispatch the search query natively to the SQLite Worker
@@ -128,6 +128,11 @@ export const ChatLayout = () => {
               <BellOutlined style={{ fontSize: '20px', color: '#2d3436' }} />
             </Badge>
             <Avatar src="https://i.pravatar.cc/150?img=11" size="large" />
+            <LogoutOutlined
+              title="Sign out"
+              onClick={onLogout}
+              style={{ fontSize: '18px', color: '#636e72', cursor: 'pointer' }}
+            />
           </div>
         </div>
 

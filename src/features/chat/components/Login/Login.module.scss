@@ -1,0 +1,95 @@
+@import '../../../../shared/styles/variables';
+
+.page {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  width: 100vw;
+  background-color: $bg-light;
+}
+
+.card {
+  background-color: $bg-white;
+  border: 1px solid $border-color;
+  border-radius: 12px;
+  padding: 48px 40px 36px;
+  width: 100%;
+  max-width: 420px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.07);
+}
+
+.logo {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-bottom: 32px;
+  text-align: center;
+}
+
+.logoIcon {
+  font-size: 40px;
+  margin-bottom: 10px;
+}
+
+.appName {
+  font-size: 22px;
+  font-weight: 700;
+  color: $primary-green;
+  margin: 0 0 4px;
+}
+
+.tagline {
+  font-size: 13px;
+  color: $text-muted;
+  margin: 0;
+  letter-spacing: 0.03em;
+}
+
+.alert {
+  margin-bottom: 20px;
+  border-radius: 8px;
+}
+
+.inputIcon {
+  color: $text-muted;
+}
+
+.input {
+  border-radius: 8px;
+
+  &:focus,
+  &:hover {
+    border-color: $primary-green;
+  }
+}
+
+.loginBtn {
+  background-color: $primary-green !important;
+  border-color: $primary-green !important;
+  border-radius: 8px;
+  font-weight: 600;
+  height: 44px;
+  font-size: 15px;
+
+  &:hover,
+  &:focus {
+    background-color: darken($primary-green, 8%) !important;
+    border-color: darken($primary-green, 8%) !important;
+  }
+}
+
+.footer {
+  margin-top: 24px;
+  text-align: center;
+  font-size: 11px;
+  color: $text-muted;
+
+  code {
+    font-size: 11px;
+    color: $text-dark;
+    background: $bg-light;
+    padding: 1px 5px;
+    border-radius: 4px;
+  }
+}
