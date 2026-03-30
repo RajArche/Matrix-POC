@@ -77,6 +77,34 @@ const tryRequestMissingRoomKey = async (matrixEvent) => {
   }
 };
 
+const disableUnverifiedDeviceBlacklistForLocalTesting = async () => {
+  if (!matrixClient) return;
+
+  const maybeAwait = async (fn, ...args) => {
+    if (typeof fn !== "function") return;
+    const result = fn(...args);
+    if (result && typeof result.then === "function") {
+      await result;
+    }
+  };
+
+  const cryptoApi = matrixClient.getCrypto?.();
+
+  // Newer Rust-crypto-aware API surface
+  try {
+    await maybeAwait(cryptoApi?.setGlobalBlacklistUnverifiedDevices?.bind(cryptoApi), false);
+  } catch (e) {
+    console.warn("[E2EE] cryptoApi.setGlobalBlacklistUnverifiedDevices(false) failed:", e?.message || e);
+  }
+
+  // Legacy convenience shim on MatrixClient
+  try {
+    await maybeAwait(matrixClient.setGlobalBlacklistUnverifiedDevices?.bind(matrixClient), false);
+  } catch (e) {
+    console.warn("[E2EE] matrixClient.setGlobalBlacklistUnverifiedDevices(false) failed:", e?.message || e);
+  }
+};
+
 const postVisibleRooms = () => {
   if (!matrixClient) return;
   const rooms = matrixClient
@@ -272,34 +300,9 @@ self.onmessage = async (event) => {
           storageBackend: "opfs",
         });
 
-        // CRITICAL FIX: By default Rust crypto only shares Megolm session keys with
-        // *verified* (cross-signed) devices. In a local / dev environment no devices
-        // have completed cross-signing, so recipient devices never receive the session
-        // key and every message shows "[Unable to decrypt yet]".
-        // Setting blacklistUnverifiedDevices = false lets session keys be sent to ALL
-        // joined devices regardless of their verification status.
-        // NOTE: For production healthcare use, layer device-verification UX on top of
-        //       this and re-enable the blacklist once users have verified their devices.
-        try {
-          const cryptoApi = matrixClient.getCrypto?.();
-          if (cryptoApi) {
-            // Rust crypto API (matrix-js-sdk v33+)
-            if (typeof cryptoApi.setGlobalBlacklistUnverifiedDevices === "function") {
-              cryptoApi.setGlobalBlacklistUnverifiedDevices(false);
-            }
-            // Newer isolation-mode API (v35+) – "AllDevicesIsolated" is the restrictive default;
-            // passing nothing / "none" removes the restriction.
-            if (typeof cryptoApi.setDeviceIsolationMode === "function") {
-              cryptoApi.setDeviceIsolationMode({ kind: "none" });
-            }
-          }
-          // Legacy wrapper method (still works in v37 as a convenience shim)
-          if (typeof matrixClient.setGlobalBlacklistUnverifiedDevices === "function") {
-            matrixClient.setGlobalBlacklistUnverifiedDevices(false);
-          }
-        } catch (e) {
-          console.warn("[E2EE] Could not set device blacklist policy:", e?.message);
-        }
+        // Local-testing policy: allow sending Megolm room keys to unverified devices.
+        // This avoids persistent "Unable to decrypt" between fresh local test accounts.
+        await disableUnverifiedDeviceBlacklistForLocalTesting();
 
         // 4. START SYNCING:
         await matrixClient.startClient({ initialSyncLimit: 20 });
