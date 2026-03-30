@@ -50,6 +50,14 @@ const postVisibleRooms = () => {
       unreadCount: room.getUnreadNotificationCount(),
       encryptionEnabled: (() => {
         try {
+          // Prefer the SDK's live-timeline check. `currentState` can lag
+          // in some cases, which causes our UI to incorrectly think
+          // encryption is disabled.
+          if (typeof room.hasEncryptionStateEvent === "function") {
+            return room.hasEncryptionStateEvent();
+          }
+
+          // Fallback: older SDKs / unexpected room state.
           const encEvents = room.currentState?.getStateEvents("m.room.encryption", "");
           return Array.isArray(encEvents) && encEvents.length > 0;
         } catch {
@@ -67,8 +75,14 @@ const findExistingDirectRoomWithUser = (targetUserId) => {
     .filter((room) => room.getMyMembership() === "join");
 
   for (const room of joinedRooms) {
-    const encryptionState = room.currentState?.getStateEvents("m.room.encryption", "");
-    if (encryptionState) continue;
+    // If encryption is already enabled, don't treat it as a "plain" DM candidate.
+    try {
+      if (typeof room.hasEncryptionStateEvent === "function" && room.hasEncryptionStateEvent()) continue;
+      const encryptionState = room.currentState?.getStateEvents("m.room.encryption", "");
+      if (encryptionState) continue;
+    } catch {
+      // If state inspection fails, allow room re-use logic to continue.
+    }
 
     const joinedMembers = room.getJoinedMembers();
     if (joinedMembers.length !== 2) continue;
@@ -81,6 +95,10 @@ const findExistingDirectRoomWithUser = (targetUserId) => {
 
 const roomHasEncryption = (room) => {
   try {
+    if (typeof room.hasEncryptionStateEvent === "function") {
+      return room.hasEncryptionStateEvent();
+    }
+
     const encEvents = room.currentState?.getStateEvents("m.room.encryption", "");
     return Array.isArray(encEvents) && encEvents.length > 0;
   } catch {
@@ -211,6 +229,10 @@ self.onmessage = async (event) => {
                 body: content.body,
                 msgtype: content.msgtype || "m.text",
                 url: content.url ? matrixClient.mxcUrlToHttp(content.url) : null,
+                format: content.format || null,
+                formattedBody: content.formatted_body || null,
+                info: content.info || null,
+                forwardedFrom: content.forwarded_from || null,
                 timestamp: matrixEvent.getTs(),
               }
             });
@@ -235,6 +257,10 @@ self.onmessage = async (event) => {
                 body: content.body,
                 msgtype: content.msgtype || "m.text",
                 url: content.url ? matrixClient.mxcUrlToHttp(content.url) : null,
+                format: content.format || null,
+                formattedBody: content.formatted_body || null,
+                info: content.info || null,
+                forwardedFrom: content.forwarded_from || null,
                 timestamp: matrixEvent.getTs(),
               }
             });
@@ -280,6 +306,71 @@ self.onmessage = async (event) => {
     case "SEND_MESSAGE":
       if (matrixClient) {
         await matrixClient.sendTextMessage(payload.roomId, payload.text);
+      }
+      break;
+
+    case "FORWARD_MESSAGE":
+      if (matrixClient) {
+        try {
+          const { sourceRoomId, sourceEventId, targetRoomId } = payload || {};
+
+          if (!sourceRoomId || !sourceEventId || !targetRoomId) {
+            throw new Error("Missing forward payload fields");
+          }
+
+          const targetRoom = matrixClient.getRoom(targetRoomId);
+          if (!targetRoom) throw new Error("Target room not found");
+
+          // Security: never forward into a non-encrypted room.
+          if (typeof targetRoom.hasEncryptionStateEvent === "function") {
+            if (!targetRoom.hasEncryptionStateEvent()) {
+              throw new Error("Target room is not E2EE enabled");
+            }
+          } else {
+            // Fallback check: if SDK method is absent, be conservative.
+            const encEvents = targetRoom?.currentState?.getStateEvents("m.room.encryption", "");
+            if (!Array.isArray(encEvents) || encEvents.length === 0) {
+              throw new Error("Target room is not E2EE enabled");
+            }
+          }
+
+          const sourceRoom = matrixClient.getRoom(sourceRoomId);
+          if (!sourceRoom) throw new Error("Source room not found");
+
+          const sourceEvent = sourceRoom.findEventById(sourceEventId);
+          if (!sourceEvent) throw new Error("Source event not available in client timeline");
+
+          if (sourceEvent.getType?.() !== "m.room.message") {
+            throw new Error("Source event is not a message");
+          }
+          if (sourceEvent.isRedacted?.()) {
+            throw new Error("Cannot forward a redacted message");
+          }
+
+          const originalContent = sourceEvent.getContent?.() || {};
+          if (isUndecryptablePlaceholder(originalContent)) {
+            throw new Error("Cannot forward an undecryptable message");
+          }
+
+          // Forward by re-sending semantic content as a NEW event.
+          // Encryption will happen automatically for the target room.
+          const forwardedContent = {
+            ...originalContent,
+            forwarded_from: {
+              sender: sourceEvent.getSender?.() || null,
+              original_event_id: sourceEventId,
+              // Timestamp is safe metadata for UI label/audit (still encrypted inside E2EE content).
+              original_ts: sourceEvent.getTs?.() || null,
+            },
+          };
+
+          await matrixClient.sendMessage(targetRoomId, forwardedContent);
+
+          // Update room list so the target conversation becomes visible.
+          postVisibleRooms();
+        } catch (e) {
+          self.postMessage({ type: "ERROR", payload: e?.message || String(e) });
+        }
       }
       break;
 

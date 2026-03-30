@@ -11,7 +11,7 @@
  *   In production, use migrations to avoid unnecessary local data loss.
  */
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 export async function initSchema(db) {
   // Read the current schema version from SQLite.
@@ -52,6 +52,9 @@ export async function initSchema(db) {
       body_enc  TEXT NOT NULL,
       body_plain TEXT,
       url       TEXT,
+      forwarded_from_sender TEXT,
+      original_event_id TEXT,
+      forwarded_from_ts INTEGER,
       timestamp INTEGER NOT NULL,
       redacted  INTEGER NOT NULL DEFAULT 0,
       created_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
