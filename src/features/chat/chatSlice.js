@@ -32,11 +32,34 @@ const chatSlice = createSlice({
       if (!state.messagesByRoom[roomId]) {
         state.messagesByRoom[roomId] = [];
       }
-      state.messagesByRoom[roomId].push(message);
+      const list = state.messagesByRoom[roomId];
+      const existingIdx = list.findIndex((m) => m.eventId === message.eventId);
+
+      if (existingIdx !== -1) {
+        // Replace an undecryptable placeholder with the real decrypted message.
+        // Never downgrade a real message back to a placeholder.
+        if (list[existingIdx].undecryptable && !message.undecryptable) {
+          list[existingIdx] = message;
+        }
+        // If both are the same type (both placeholder or both real), skip to avoid duplicates.
+        return;
+      }
+
+      list.push(message);
     },
     setRoomMessages(state, action) {
       const { roomId, messages } = action.payload;
-      state.messagesByRoom[roomId] = messages;
+      // Merge SQLite-loaded history with any in-memory live messages, deduplicating by eventId.
+      // Real (decrypted) messages take priority over undecryptable placeholders.
+      const existing = state.messagesByRoom[roomId] || [];
+      const merged = new Map();
+      for (const m of [...messages, ...existing]) {
+        const prev = merged.get(m.eventId);
+        if (!prev || (prev.undecryptable && !m.undecryptable)) {
+          merged.set(m.eventId, m);
+        }
+      }
+      state.messagesByRoom[roomId] = Array.from(merged.values()).sort((a, b) => a.timestamp - b.timestamp);
     },
     setCurrentUserId(state, action) {
       state.currentUserId = action.payload;
