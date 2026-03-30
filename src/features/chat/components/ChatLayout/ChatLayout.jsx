@@ -21,7 +21,7 @@ export const ChatLayout = () => {
 
   const [searchQuery, setSearchQuery] = useState("");
 
-  const { sendMessage, searchMessages, createGroupChat, createDirectChat, getRoomMembers, inviteUser, joinRoom, leaveRoom, uploadFile, searchDirectoryUsers } = useMatrixInit(
+  const { sendMessage, searchMessages, createGroupChat, createDirectChat, getRoomMembers, inviteUser, joinRoom, leaveRoom, uploadFile, searchDirectoryUsers, forwardMessage } = useMatrixInit(
     "@admin:localhost",
     "syt_YWRtaW4_hvVgepCsgOrhNDhNPOjs_22VskB",
     "http://172.16.7.246:8008",
@@ -152,6 +152,7 @@ export const ChatLayout = () => {
               leaveRoom={leaveRoom}
               uploadFile={uploadFile}
               joinRoom={joinRoom}
+              forwardMessage={forwardMessage}
             />
           </div>
         </div>

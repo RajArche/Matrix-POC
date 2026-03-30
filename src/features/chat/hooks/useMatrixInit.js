@@ -207,5 +207,14 @@ export const useMatrixInit = (userId, accessToken, baseUrl = "http://172.16.7.24
     }
   };
 
-  return { sendMessage, searchMessages, createGroupChat, createDirectChat, getRoomMembers, inviteUser, joinRoom, leaveRoom, uploadFile, searchDirectoryUsers };
+  const forwardMessage = (sourceRoomId, sourceEventId, targetRoomId) => {
+    if (matrixWorkerRef.current) {
+      matrixWorkerRef.current.postMessage({
+        type: "FORWARD_MESSAGE",
+        payload: { sourceRoomId, sourceEventId, targetRoomId },
+      });
+    }
+  };
+
+  return { sendMessage, searchMessages, createGroupChat, createDirectChat, getRoomMembers, inviteUser, joinRoom, leaveRoom, uploadFile, searchDirectoryUsers, forwardMessage };
 };

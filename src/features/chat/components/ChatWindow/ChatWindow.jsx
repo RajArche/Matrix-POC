@@ -1,17 +1,24 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Input, Button, Dropdown, Menu, Tooltip, Typography } from 'antd';
-import { PhoneOutlined, VideoCameraOutlined, MoreOutlined, SendOutlined, TeamOutlined, UserAddOutlined, PaperClipOutlined, LogoutOutlined, UnorderedListOutlined, CheckOutlined, CloseOutlined, MailOutlined } from '@ant-design/icons';
-import { useSelector } from 'react-redux';
+import { Input, Button, Dropdown, Menu, Tooltip, Typography, message as antdMessage } from 'antd';
+import { PhoneOutlined, VideoCameraOutlined, MoreOutlined, SendOutlined, TeamOutlined, UserAddOutlined, PaperClipOutlined, LogoutOutlined, UnorderedListOutlined, CheckOutlined, CloseOutlined, MailOutlined, CopyOutlined, ShareAltOutlined } from '@ant-design/icons';
+import { useSelector, useDispatch } from 'react-redux';
 import { InviteMemberModal } from '../InviteMemberModal/InviteMemberModal';
 import { MemberListDrawer } from '../MemberListDrawer/MemberListDrawer';
+import { ForwardModal } from '../ForwardModal/ForwardModal';
+import { setActiveRoom } from '../../chatSlice';
 
 const { Text } = Typography;
 
-export const ChatWindow = ({ sendMessage, getRoomMembers, inviteUser, leaveRoom, uploadFile, joinRoom }) => {
+export const ChatWindow = ({ sendMessage, getRoomMembers, inviteUser, leaveRoom, uploadFile, joinRoom, forwardMessage }) => {
+  const dispatch = useDispatch();
   const [text, setText] = useState("");
   const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
   const [isMemberListOpen, setIsMemberListOpen] = useState(false);
   const fileInputRef = useRef(null);
+  const [isForwardModalOpen, setIsForwardModalOpen] = useState(false);
+  const [forwardSourceEventId, setForwardSourceEventId] = useState(null);
+  const [forwardSourceSender, setForwardSourceSender] = useState(null);
+  const [forwardSourceBodyPreview, setForwardSourceBodyPreview] = useState(null);
 
   // 1. Get active room, logged-in user from Redux
   const activeRoomId = useSelector(state => state.chat.activeRoomId);
@@ -23,6 +30,66 @@ export const ChatWindow = ({ sendMessage, getRoomMembers, inviteUser, leaveRoom,
   // 2. Fetch messages and members for this room
   const messages = useSelector(state => activeRoomId ? state.chat.messagesByRoom[activeRoomId] || [] : []);
   const members = useSelector(state => activeRoomId ? state.chat.membersByRoom[activeRoomId] || [] : []);
+
+  const isUndecryptable = (msg) => {
+    const body = msg?.body || "";
+    return typeof body === "string" && (body.includes("Unable to decrypt") || body.includes("[Unable to decrypt"));
+  };
+
+  const handleCopyMessage = async (msg) => {
+    try {
+      if (!msg || isUndecryptable(msg)) return;
+
+      // For media, copy URL (if present); for text copy body.
+      if (msg.msgtype === "m.image" || msg.msgtype === "m.file") {
+        const url = msg.url || "";
+        const meta = msg.body ? ` (${msg.body})` : "";
+        await navigator.clipboard.writeText(`${url}${meta}`.trim());
+      } else {
+        // If we have formatted HTML, try to copy both text/plain + text/html.
+        // If the browser does not support rich clipboard writes, fall back to plain text.
+        if (msg.formattedBody) {
+          try {
+            const htmlBlob = new Blob([msg.formattedBody], { type: "text/html" });
+            const textBlob = new Blob([msg.body || ""], { type: "text/plain" });
+            await navigator.clipboard.write([
+              new ClipboardItem({
+                "text/plain": textBlob,
+                "text/html": htmlBlob,
+              }),
+            ]);
+          } catch (_) {
+            await navigator.clipboard.writeText(msg.body || "");
+          }
+        } else {
+          await navigator.clipboard.writeText(msg.body || "");
+        }
+      }
+      antdMessage.success("Copied to clipboard");
+    } catch (e) {
+      antdMessage.error("Copy failed");
+    }
+  };
+
+  const openForwardModal = (msg) => {
+    if (!msg || isUndecryptable(msg)) return;
+    setForwardSourceEventId(msg.eventId);
+    setForwardSourceSender(msg.sender);
+    setForwardSourceBodyPreview(msg.msgtype === "m.image" || msg.msgtype === "m.file" ? (msg.body || "Media") : (msg.body || ""));
+    setIsForwardModalOpen(true);
+  };
+
+  const handleForwardConfirmed = (targetRoomId) => {
+    if (!forwardMessage) return;
+    if (!forwardSourceEventId) return;
+
+    // Security: still rely on worker E2EE enforcement as final gate.
+    forwardMessage(activeRoomId, forwardSourceEventId, targetRoomId);
+    // UX: navigate user to the target room immediately.
+    dispatch(setActiveRoom(targetRoomId));
+    setIsForwardModalOpen(false);
+    setForwardSourceEventId(null);
+  };
 
   // 3. Fetch members whenever the active room changes
   useEffect(() => {
@@ -170,15 +237,32 @@ export const ChatWindow = ({ sendMessage, getRoomMembers, inviteUser, leaveRoom,
         roomName={activeRoom?.name}
       />
 
+      <ForwardModal
+        isOpen={isForwardModalOpen}
+        onClose={() => setIsForwardModalOpen(false)}
+        rooms={rooms}
+        sourceRoomId={activeRoomId}
+        sourceSender={forwardSourceSender}
+        sourceBodyPreview={forwardSourceBodyPreview}
+        onForward={handleForwardConfirmed}
+      />
+
       {/* Message Timeline Area */}
       <div style={{ flex: 1, padding: '24px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '12px', backgroundColor: '#fafafa' }}>
         {messages.map((msg, index) => {
           // Use currentUserId from Redux for correct bubble side alignment
           const isMe = msg.sender === currentUserId;
+          const showForwarded = !!msg.forwardedFrom;
+          const forwardedFromSender = msg.forwardedFrom?.sender;
           return (
             <div key={index} style={{ alignSelf: isMe ? 'flex-end' : 'flex-start', display: 'flex', flexDirection: 'column', maxWidth: '70%' }}>
               {!isMe && (
                 <div style={{ fontSize: '11px', color: '#636e72', marginBottom: '4px', paddingLeft: '4px' }}>{msg.sender}</div>
+              )}
+              {showForwarded && (
+                <div style={{ fontSize: '11px', color: '#0c4e4c', marginBottom: '6px', paddingLeft: '4px', fontWeight: 500 }}>
+                  Forwarded{forwardedFromSender ? ` from ${forwardedFromSender}` : ''}
+                </div>
               )}
               <div style={{
                 backgroundColor: isMe ? '#0c4e4c' : '#ffffff',
@@ -210,6 +294,22 @@ export const ChatWindow = ({ sendMessage, getRoomMembers, inviteUser, leaveRoom,
                 <div style={{ fontSize: '10px', marginTop: '4px', opacity: 0.7, textAlign: isMe ? 'right' : 'left' }}>
                   {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                 </div>
+              </div>
+
+              {/* Message actions (Copy + Forward) */}
+              <div style={{ display: 'flex', gap: '12px', marginTop: '6px', alignSelf: isMe ? 'flex-end' : 'flex-start' }}>
+                <Tooltip title="Copy message">
+                  <CopyOutlined
+                    onClick={() => handleCopyMessage(msg)}
+                    style={{ cursor: isUndecryptable(msg) ? 'not-allowed' : 'pointer', color: '#636e72' }}
+                  />
+                </Tooltip>
+                <Tooltip title="Forward message">
+                  <ShareAltOutlined
+                    onClick={() => openForwardModal(msg)}
+                    style={{ cursor: isUndecryptable(msg) ? 'not-allowed' : 'pointer', color: '#636e72' }}
+                  />
+                </Tooltip>
               </div>
             </div>
           );
@@ -250,3 +350,4 @@ export const ChatWindow = ({ sendMessage, getRoomMembers, inviteUser, leaveRoom,
     </div>
   );
 };
+

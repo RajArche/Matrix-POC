@@ -17,12 +17,17 @@ export async function insertMessage(db, payload) {
   // Store:
   // - body_enc: ciphertext at rest
   // - body_plain: plaintext used by the FTS trigger at insert time
+  const forwardedFrom = payload.forwardedFrom || null;
+  const forwardedFromSender = forwardedFrom?.sender ?? null;
+  const originalEventId = forwardedFrom?.original_event_id ?? null;
+  const forwardedFromTs = forwardedFrom?.original_ts ?? null;
+
   db.exec({
     sql: `
       INSERT OR IGNORE INTO messages
-        (eventId, roomId, sender, msgtype, body_enc, body_plain, url, timestamp, redacted)
+        (eventId, roomId, sender, msgtype, body_enc, body_plain, url, forwarded_from_sender, original_event_id, forwarded_from_ts, timestamp, redacted)
       VALUES
-        (?, ?, ?, ?, ?, ?, ?, ?, 0)
+        (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
     `,
     bind: [
       payload.eventId,
@@ -32,6 +37,9 @@ export async function insertMessage(db, payload) {
       bodyEnc,
       String(plaintextBody),
       payload.url ?? null,
+      forwardedFromSender,
+      originalEventId,
+      forwardedFromTs,
       payload.timestamp,
     ],
   });
@@ -57,6 +65,9 @@ export async function loadOfflineMessages(db, roomId) {
         msgtype,
         body_enc,
         url,
+        forwarded_from_sender,
+        original_event_id,
+        forwarded_from_ts,
         timestamp
       FROM messages
       WHERE roomId = ?
@@ -83,6 +94,13 @@ export async function loadOfflineMessages(db, roomId) {
         msgtype: row.msgtype,
         body,
         url: row.url,
+        forwardedFrom: row.forwarded_from_sender
+          ? {
+              sender: row.forwarded_from_sender,
+              original_event_id: row.original_event_id,
+              original_ts: row.forwarded_from_ts,
+            }
+          : null,
         timestamp: row.timestamp,
       });
     } catch (_) {
@@ -95,6 +113,13 @@ export async function loadOfflineMessages(db, roomId) {
         msgtype: row.msgtype || "m.text",
         body: "[Unable to decrypt locally]",
         url: row.url,
+        forwardedFrom: row.forwarded_from_sender
+          ? {
+              sender: row.forwarded_from_sender,
+              original_event_id: row.original_event_id,
+              original_ts: row.forwarded_from_ts,
+            }
+          : null,
         timestamp: row.timestamp,
       });
     }
