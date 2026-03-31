@@ -30,7 +30,6 @@ const initialState = {
   matrixAccessToken: null,
   // ── VoIP call state ──────────────────────────────────────────────────────
   callState: { ...CALL_STATE_IDLE },
-  pendingCallEvent: null,  // latest raw Matrix call event forwarded from worker
 };
 
 const chatSlice = createSlice({
@@ -122,12 +121,6 @@ const chatSlice = createSlice({
     clearCall(state) {
       state.callState = { ...CALL_STATE_IDLE };
     },
-    setPendingCallEvent(state, action) {
-      state.pendingCallEvent = action.payload;
-    },
-    clearPendingCallEvent(state) {
-      state.pendingCallEvent = null;
-    },
   }
 });
 
@@ -136,6 +129,6 @@ export const {
   setCurrentUserId, setSearchResults, setIsSearching, setRoomMembers,
   setDirectoryUsers, setMatrixAccessToken,
   removeMessage,
-  setCallStatus, setIncomingCall, clearCall, setPendingCallEvent, clearPendingCallEvent,
+  setCallStatus, setIncomingCall, clearCall,
 } = chatSlice.actions;
 export default chatSlice.reducer;

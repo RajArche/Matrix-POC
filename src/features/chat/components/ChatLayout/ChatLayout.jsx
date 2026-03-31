@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import styles from './ChatLayout.module.scss';
 import { SidebarMenu } from '../SidebarMenu/SidebarMenu';
 import { ConversationList } from '../ConversationList/ConversationList';
@@ -20,9 +20,11 @@ export const ChatLayout = ({ session, onLogout }) => {
   const rooms = useSelector(state => state.chat.rooms);
   const directoryUsers = useSelector(state => state.chat.directoryUsers);
 
-  console.log(rooms, "rooms")
-
   const [searchQuery, setSearchQuery] = useState("");
+
+  // Shared ref that lets useMatrixInit deliver CALL_EVENTs directly to
+  // useCallManager without any Redux roundtrip (no dispatch per ICE candidate).
+  const callEventRef = useRef(null);
 
   const {
     sendMessage, searchMessages, createGroupChat, createDirectChat,
@@ -32,14 +34,15 @@ export const ChatLayout = ({ session, onLogout }) => {
     session.userId,
     session.accessToken,
     "http://172.16.7.246:8008",
-    session.deviceId || null
+    session.deviceId || null,
+    callEventRef
   );
 
   const {
     placeVoiceCall, placeVideoCall,
     answerCall, rejectCall, hangup,
     localStream, remoteStream, callState,
-  } = useCallManager(sendCallEvent);
+  } = useCallManager(sendCallEvent, callEventRef);
 
   // Dispatch the search query natively to the SQLite Worker
   const handleSearch = (e) => {

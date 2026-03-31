@@ -12,18 +12,12 @@ import styles from './ActiveCall.module.scss';
  * Displays local and remote video streams (audio-only calls hide video elements).
  */
 export const ActiveCall = ({ callState, localStream, remoteStream, onHangup }) => {
-  const isVisible =
-    callState.status === 'ringing_out' ||
-    callState.status === 'ongoing';
-
-  if (!isVisible) return null;
-
+  // All hooks MUST be declared before any conditional return (Rules of Hooks).
   const localVideoRef  = useRef(null);
   const remoteVideoRef = useRef(null);
 
-  const [muted,    setMuted]    = useState(false);
-  const [camOff,   setCamOff]   = useState(false);
-  const isVideo = callState.callType === 'video';
+  const [muted,  setMuted]  = useState(false);
+  const [camOff, setCamOff] = useState(false);
 
   // Attach local stream to the local <video> element
   useEffect(() => {
@@ -38,6 +32,14 @@ export const ActiveCall = ({ callState, localStream, remoteStream, onHangup }) =
       remoteVideoRef.current.srcObject = remoteStream;
     }
   }, [remoteStream]);
+
+  const isVisible =
+    callState.status === 'ringing_out' ||
+    callState.status === 'ongoing';
+
+  if (!isVisible) return null;
+
+  const isVideo = callState.callType === 'video';
 
   const toggleMute = () => {
     if (!localStream) return;

@@ -1,12 +1,12 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useCallback } from 'react';
 import { useDispatch } from 'react-redux';
-import { setRooms, pushMessage, setRoomMessages, setReady, setCurrentUserId, setSearchResults, setIsSearching, setRoomMembers, setActiveRoom, setDirectoryUsers, setPendingCallEvent, removeMessage } from '../chatSlice';
+import { setRooms, pushMessage, setRoomMessages, setReady, setCurrentUserId, setSearchResults, setIsSearching, setRoomMembers, setActiveRoom, setDirectoryUsers, removeMessage } from '../chatSlice';
 
 // Module-level set of eventIds that are Matrix call signaling events.
 // These must never appear as chat bubbles. Persists for the session lifetime.
 const callEventIds = new Set();
 
-export const useMatrixInit = (userId, accessToken, baseUrl = "http://172.16.7.246:8008", deviceId = null) => {
+export const useMatrixInit = (userId, accessToken, baseUrl = "http://172.16.7.246:8008", deviceId = null, callEventRef = null) => {
   const dispatch = useDispatch();
 
   // We manage BOTH Web Workers outside the React render thread to guarantee 60fps UI
@@ -108,8 +108,10 @@ export const useMatrixInit = (userId, accessToken, baseUrl = "http://172.16.7.24
         sqliteWorkerRef.current.postMessage({ type: 'INSERT_MESSAGE', payload });
 
       } else if (type === 'CALL_EVENT') {
-        // VoIP: forward raw Matrix call event to the main-thread call manager.
-        dispatch(setPendingCallEvent(payload));
+        // Deliver the call event directly to useCallManager via the shared ref.
+        // This bypasses Redux entirely so ICE-candidate processing never triggers
+        // a Redux dispatch cycle (which caused "Maximum update depth exceeded").
+        callEventRef?.current?.(payload);
 
       } else if (type === 'REMOVE_CALL_PLACEHOLDER') {
         // A decrypted call event (m.call.invite etc.) had previously been stored
@@ -238,16 +240,16 @@ export const useMatrixInit = (userId, accessToken, baseUrl = "http://172.16.7.24
   };
 
   // VoIP: send a Matrix call signaling event through the existing worker.
-  // The main-thread useCallManager hook calls this to relay SDP offer/answer
-  // and ICE candidates without needing a second Matrix client.
-  const sendCallEvent = (roomId, eventType, content) => {
+  // Wrapped in useCallback with an empty dep array so the reference is stable
+  // across renders — prevents useCallManager's effects from re-running every render.
+  const sendCallEvent = useCallback((roomId, eventType, content) => {
     if (matrixWorkerRef.current) {
       matrixWorkerRef.current.postMessage({
         type: 'SEND_CALL_EVENT',
         payload: { roomId, eventType, content },
       });
     }
-  };
+  }, []);
 
   return { sendMessage, searchMessages, createGroupChat, createDirectChat, getRoomMembers, inviteUser, joinRoom, leaveRoom, uploadFile, searchDirectoryUsers, forwardMessage, sendCallEvent };
 };

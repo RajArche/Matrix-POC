@@ -31,16 +31,6 @@ export const ChatWindow = ({ sendMessage, getRoomMembers, inviteUser, leaveRoom,
   const activeRoom     = rooms.find(r => r.id === activeRoomId);
   const encryptionEnabled = !!activeRoom?.encryptionEnabled;
 
-  // Call precondition: calls are only available when the room is encrypted,
-  // the current user has joined, and at least one other member is present.
-  const roomMembers    = membersByRoom[activeRoomId] || [];
-  const joinedMembers  = roomMembers.filter(m => m.membership === 'join');
-  const callsAvailable =
-    encryptionEnabled &&
-    activeRoom?.membership === 'join' &&
-    joinedMembers.length >= 2 &&
-    callState.status === 'idle';
-
   const handleCall = async (type) => {
     setCallError(null);
     const fn = type === 'video' ? placeVideoCall : placeVoiceCall;
@@ -53,9 +43,24 @@ export const ChatWindow = ({ sendMessage, getRoomMembers, inviteUser, leaveRoom,
     }
   };
 
+  // Stable fallbacks — never return a new [] reference from a selector,
+  // which would cause React-Redux to re-render on every store update.
+  const EMPTY_MSGS = React.useRef([]).current;
+  const EMPTY_MEMS = React.useRef([]).current;
+
+  // Call precondition: calls are only available when the room is encrypted,
+  // the current user has joined, and at least one other member is present.
+  const roomMembers    = membersByRoom[activeRoomId] ?? EMPTY_MEMS;
+  const joinedMembers  = roomMembers.filter(m => m.membership === 'join');
+  const callsAvailable =
+    encryptionEnabled &&
+    activeRoom?.membership === 'join' &&
+    joinedMembers.length >= 2 &&
+    callState.status === 'idle';
+
   // 2. Fetch messages and members for this room
-  const messages = useSelector(state => activeRoomId ? state.chat.messagesByRoom[activeRoomId] || [] : []);
-  const members = useSelector(state => activeRoomId ? state.chat.membersByRoom[activeRoomId] || [] : []);
+  const messages = useSelector(state => activeRoomId ? state.chat.messagesByRoom[activeRoomId] ?? EMPTY_MSGS : EMPTY_MSGS);
+  const members  = useSelector(state => activeRoomId ? state.chat.membersByRoom[activeRoomId]  ?? EMPTY_MEMS : EMPTY_MEMS);
 
   const isUndecryptable = (msg) => {
     const body = msg?.body || "";
